@@ -54,10 +54,13 @@ const ui_key_entry *ui_keys_find(unsigned usage);
  * Keyboard keys and mouse buttons are both captured: a mouse press reports
  * UI_KEY_CAPTURE_MOUSE with *usage set to the enum naga_mouse id. Modifier
  * keys are not captured as the binding themselves; their state is folded into
- * *mod when a non-modifier key is pressed.
+ * *mod when a non-modifier key is pressed. Linux media keys arrive from GLFW
+ * as GLFW_KEY_UNKNOWN with the evdev keycode in scancode and are mapped back
+ * to their HID consumer usages.
  */
-enum ui_key_capture ui_keys_capture_key(int key, int action, int mods,
-					unsigned *usage, unsigned *mod);
+enum ui_key_capture ui_keys_capture_key(int key, int scancode, int action,
+					int mods, unsigned *usage,
+					unsigned *mod);
 enum ui_key_capture ui_keys_capture_mouse(int button, unsigned *usage);
 
 #endif /* ANTIRAZER_UI_KEYS_H */

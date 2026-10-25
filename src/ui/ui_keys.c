@@ -15,6 +15,7 @@
 #include <strings.h>
 
 #include <GLFW/glfw3.h>
+#include <linux/input-event-codes.h>
 
 #include "naga.h"
 
@@ -334,6 +335,40 @@ static unsigned mod_bits(int mods)
 	return bits;
 }
 
+/*
+ * GLFW has no key tokens for the media/consumer keys. On Linux it reports
+ * them as GLFW_KEY_UNKNOWN with the evdev keycode in scancode, which is
+ * exactly what we need to find the HID consumer usage.
+ */
+static unsigned media_usage_for_scancode(int scancode)
+{
+	switch (scancode) {
+	case KEY_POWER:
+		return 0x66;
+	case KEY_MENU:
+	case KEY_COMPOSE:
+		return 0x65;
+	case KEY_MUTE:
+		return 0x7F;
+	case KEY_VOLUMEUP:
+		return 0x80;
+	case KEY_VOLUMEDOWN:
+		return 0x81;
+	case KEY_NEXTSONG:
+		return 0xB5;
+	case KEY_PREVIOUSSONG:
+		return 0xB6;
+	case KEY_STOPCD:
+		return 0xB7;
+	case KEY_EJECTCD:
+		return 0xB8;
+	case KEY_PLAYPAUSE:
+		return 0xCD;
+	default:
+		return 0;
+	}
+}
+
 static bool is_modifier(int key)
 {
 	switch (key) {
@@ -351,9 +386,12 @@ static bool is_modifier(int key)
 	}
 }
 
-enum ui_key_capture ui_keys_capture_key(int key, int action, int mods,
-					unsigned *usage, unsigned *mod)
+enum ui_key_capture ui_keys_capture_key(int key, int scancode, int action,
+					int mods, unsigned *usage,
+					unsigned *mod)
 {
+	unsigned media;
+
 	if (action != GLFW_PRESS)
 		return UI_KEY_CAPTURE_NONE;
 	if (key == GLFW_KEY_ESCAPE)
@@ -361,15 +399,16 @@ enum ui_key_capture ui_keys_capture_key(int key, int action, int mods,
 	if (is_modifier(key))
 		return UI_KEY_CAPTURE_NONE;
 
+	media = media_usage_for_scancode(scancode);
+	if (media) {
+		*usage = media;
+		*mod = mod_bits(mods);
+		return UI_KEY_CAPTURE_KEY;
+	}
+
 	for (size_t i = 0; i < entry_count; i++) {
-		if (entries[i].usage == 0x32 || entries[i].usage == 0x85 ||
-		    entries[i].usage == 0x65 || entries[i].usage == 0x66 ||
-		    entries[i].usage == 0x7F || entries[i].usage == 0x80 ||
-		    entries[i].usage == 0x81 || entries[i].usage == 0xB5 ||
-		    entries[i].usage == 0xB6 || entries[i].usage == 0xB7 ||
-		    entries[i].usage == 0xB8 || entries[i].usage == 0xCD)
-			continue;
-		if (glfw_key_for(entries[i].usage) == key) {
+		if (glfw_key_for(entries[i].usage) == key &&
+		    key != GLFW_KEY_UNKNOWN) {
 			*usage = entries[i].usage;
 			*mod = mod_bits(mods);
 			return UI_KEY_CAPTURE_KEY;

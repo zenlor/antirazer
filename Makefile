@@ -149,10 +149,16 @@ $(BUILD)/test_ui_queue: tests/test_ui_queue.c $(BUILD)/ui_state.o \
                         $(BUILD)/remap_config.o $(CORE_OBJS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LIBUSB_LIBS)
 
-test: $(BUILD)/test_keys $(BUILD)/test_remap $(BUILD)/test_ui_queue
+$(BUILD)/test_ui_keys: tests/test_ui_keys.c $(BUILD)/ui_keys.o \
+                       $(BUILD)/naga_keys.o $(BUILD)/naga_ctrls.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(UI_CFLAGS) -o $@ $^ $(GLFW_LIBS)
+
+test: $(BUILD)/test_keys $(BUILD)/test_remap $(BUILD)/test_ui_queue \
+      $(BUILD)/test_ui_keys
 	./$(BUILD)/test_keys
 	./$(BUILD)/test_remap
 	./$(BUILD)/test_ui_queue
+	./$(BUILD)/test_ui_keys
 
 # ---- research tools -------------------------------------------------------
 

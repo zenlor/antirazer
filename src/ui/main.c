@@ -126,7 +126,8 @@ static void key_callback(GLFWwindow *window, int key, int scancode, int action,
 		unsigned usage = 0;
 		unsigned mod = 0;
 		enum ui_key_capture captured =
-		    ui_keys_capture_key(key, action, mods, &usage, &mod);
+		    ui_keys_capture_key(key, scancode, action, mods, &usage,
+					&mod);
 
 		if (captured == UI_KEY_CAPTURE_KEY) {
 			ui_state_set_key(g_state, usage, mod);
