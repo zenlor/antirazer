@@ -165,6 +165,20 @@ The status table above is the honest boundary of what has been verified on
 hardware; sibling devices of the same generation probably share the encoding,
 but nothing here is tested against them.
 
+## OpenRazer
+
+[`contrib/openrazer/`](contrib/openrazer/) contains a patch that brings the
+same onboard button actions to OpenRazer — a `button_action` sysfs file in the
+`razermouse` kernel module and `razer.device.onboard` DBus methods in the
+daemon — plus a NixOS overlay exported as `overlays.default`:
+
+```nix
+{ nixpkgs.overlays = [ antirazer.overlays.default ]; }
+```
+
+See [`contrib/openrazer/README.md`](contrib/openrazer/README.md) for the API,
+patch files and verification status.
+
 ## Troubleshooting
 
 **"Naga LH 2020 not found (check the udev rule or permissions)"** — install the

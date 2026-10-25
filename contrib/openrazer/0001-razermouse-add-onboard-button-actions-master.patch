@@ -1,0 +1,412 @@
+From 6a4d9d6eeb30cda3d2d43da193ee0c0fcc913dc2 Mon Sep 17 00:00:00 2001
+From: Lorenzo Giuliani <lorenzo@frenzart.com>
+Date: Sun, 25 Oct 2026 12:47:00 +0100
+Subject: [PATCH] razermouse: add onboard button actions for the Naga LH 2020
+
+The Naga Left-Handed Edition 2020 keeps its key bindings in onboard flash and
+plays them back itself, so Windows Synapse is the only writer. The protocol is
+class 02 command 0C for writes and 8C for reads, with the same
+<type> <length> <data...> action encoding used by the Naga V2 Pro in #2962:
+0x02 <mod> <usage> for a keyboard key, 0x0D <mod> <usage> <rate hi> <rate lo>
+for autofire.
+
+Add the button_action sysfs file for this device: writing three bytes selects
+a button, writing "<store> <button> <layer> <action...>" stores the action and
+sends the 00/B3 commit that makes it active without a replug. Reading returns
+the ten-byte record.
+
+The daemon side exposes razer.device.onboard with getButtons,
+getButtonAction and setButtonAction on the existing device class.
+
+Only the live profile (store 1) and the twelve thumb-grid controls
+0x40..0x4B are exposed. Those are the combinations verified on hardware;
+other controls use a different input class and are left alone.
+
+The read request carries the input class in argument 3 (0x02 for the thumb
+grid); without it this firmware does not answer mapping reads.
+---
+ .../dbus_services/dbus_methods/__init__.py    |   1 +
+ .../dbus_methods/mouse_onboard.py             | 114 ++++++++++++++++++
+ daemon/openrazer_daemon/hardware/mouse.py     |   7 +-
+ driver/razerchromacommon.c                    |  57 +++++++++
+ driver/razerchromacommon.h                    |   4 +
+ driver/razermouse_driver.c                    |  89 ++++++++++++++
+ driver/razermouse_driver.h                    |   5 +
+ 7 files changed, 276 insertions(+), 1 deletion(-)
+ create mode 100644 daemon/openrazer_daemon/dbus_services/dbus_methods/mouse_onboard.py
+
+diff --git a/daemon/openrazer_daemon/dbus_services/dbus_methods/__init__.py b/daemon/openrazer_daemon/dbus_services/dbus_methods/__init__.py
+index 557399a..695bffe 100644
+--- a/daemon/openrazer_daemon/dbus_services/dbus_methods/__init__.py
++++ b/daemon/openrazer_daemon/dbus_services/dbus_methods/__init__.py
+@@ -20,3 +20,4 @@ from openrazer_daemon.dbus_services.dbus_methods.accessory import *
+ from openrazer_daemon.dbus_services.dbus_methods.charging_pad_chroma import *
+ from openrazer_daemon.dbus_services.dbus_methods.mouse_scroll_wheel import *
+ from openrazer_daemon.dbus_services.dbus_methods.argb_controller import *
++from openrazer_daemon.dbus_services.dbus_methods.mouse_onboard import *
+diff --git a/daemon/openrazer_daemon/dbus_services/dbus_methods/mouse_onboard.py b/daemon/openrazer_daemon/dbus_services/dbus_methods/mouse_onboard.py
+new file mode 100644
+index 0000000..91ae53b
+--- /dev/null
++++ b/daemon/openrazer_daemon/dbus_services/dbus_methods/mouse_onboard.py
+@@ -0,0 +1,114 @@
++# SPDX-License-Identifier: GPL-2.0-or-later
++
++"""
++Onboard button actions for the Razer Naga Left-Handed Edition 2020.
++
++The device stores one action per button and layer. An action is
++<type> <length> <data...>:
++
++  0x02 <mod> <usage>                      keyboard key (HID usage, modifier bitmap)
++  0x0D <mod> <usage> <rate hi> <rate lo>  autofire, rate = 1000000 / delay in ms
++
++The action is written to flash and only becomes active after the driver's
++explicit commit command, which the sysfs write handles.
++"""
++
++from openrazer_daemon.dbus_services import endpoint
++
++# The Naga LH 2020 exposes the live profile at storage id 1 and twelve
++# thumb-grid buttons.
++LIVE_PROFILE = 1
++THUMB_BUTTONS = tuple(range(0x40, 0x4C))
++
++
++def _check_button(store, button, layer):
++    if store != LIVE_PROFILE:
++        raise ValueError("store has to be 1: the Naga LH 2020 has a single onboard profile")
++    if button not in THUMB_BUTTONS:
++        raise ValueError("button has to be a thumb-grid control instance (0x40..0x4B)")
++    if layer not in (0, 1):
++        raise ValueError("layer has to be 0 (standard) or 1 (Hypershift)")
++
++
++@endpoint('razer.device.onboard', 'getButtons', out_sig='ay')
++def get_onboard_buttons(self):
++    """
++    Get the button instances that support onboard actions
++
++    :return: Button ids
++    :rtype: list of int
++    """
++    self.logger.debug("DBus call get_onboard_buttons")
++
++    return list(self.ONBOARD_BUTTONS)
++
++
++@endpoint('razer.device.onboard', 'getButtonAction', in_sig='yyy', out_sig='ay')
++def get_button_action(self, store, button, layer):
++    """
++    Get the action stored on the device for a button
++
++    :param store: 1 (the live profile)
++    :type store: int
++
++    :param button: Button id, 0x40..0x4B
++    :type button: int
++
++    :param layer: 0 = standard, 1 = Hypershift
++    :type layer: int
++
++    :return: <type> <length> <data...>
++    :rtype: list of int
++    """
++    self.logger.debug("DBus call get_button_action")
++
++    _check_button(store, button, layer)
++
++    return list(_read_button_action(self, store, button, layer))
++
++
++def _read_button_action(self, store, button, layer):
++    driver_path = self.get_driver_path('button_action')
++
++    # Another sysfs writer can change the selected button between write and read
++    for _ in range(3):
++        with open(driver_path, 'wb') as driver_file:
++            driver_file.write(bytes((store, button, layer)))
++        with open(driver_path, 'rb') as driver_file:
++            reply = driver_file.read().ljust(10, b'\0')
++        if reply[0] == store and reply[1] == button:
++            break
++    else:
++        raise OSError("button_action kept returning another button")
++
++    end = max(5 + reply[4], len(reply.rstrip(b'\0')))
++    return reply[3:end]
++
++
++@endpoint('razer.device.onboard', 'setButtonAction', in_sig='yyyay', byte_arrays=True)
++def set_button_action(self, store, button, layer, action):
++    """
++    Store and apply an action on the device for a button
++
++    :param store: 1 (the live profile)
++    :type store: int
++
++    :param button: Button id, 0x40..0x4B
++    :type button: int
++
++    :param layer: 0 = standard, 1 = Hypershift
++    :type layer: int
++
++    :param action: <type> <length> <data...>, 2 to 7 bytes
++    :type action: bytes
++    """
++    self.logger.debug("DBus call set_button_action")
++
++    _check_button(store, button, layer)
++    if len(action) not in range(2, 8):
++        raise ValueError("action has to be between 2 and 7 bytes")
++
++    driver_path = self.get_driver_path('button_action')
++
++    with open(driver_path, 'wb') as driver_file:
++        driver_file.write(bytes((store, button, layer)) + bytes(action))
+diff --git a/daemon/openrazer_daemon/hardware/mouse.py b/daemon/openrazer_daemon/hardware/mouse.py
+index 865d846..5453a54 100644
+--- a/daemon/openrazer_daemon/hardware/mouse.py
++++ b/daemon/openrazer_daemon/hardware/mouse.py
+@@ -961,10 +961,15 @@ class RazerNagaLeftHanded2020(__RazerDevice):
+                'get_right_brightness', 'set_right_brightness',
+                'set_right_wave', 'set_right_static', 'set_right_spectrum', 'set_right_none', 'set_right_reactive', 'set_right_breath_random', 'set_right_breath_single', 'set_right_breath_dual',
+                # Custom frame
+-               'set_custom_effect', 'set_key_row']
++               'set_custom_effect', 'set_key_row',
++               # Onboard button actions (thumb grid)
++               'get_onboard_buttons', 'get_button_action', 'set_button_action']
+ 
+     DPI_MAX = 20000
+ 
++    # The twelve thumb-grid buttons, as control instances
++    ONBOARD_BUTTONS = tuple(range(0x40, 0x4C))
++
+     DEVICE_IMAGE = "https://rzrwarranty.s3.amazonaws.com/cee694cd7526df413008167b7566af310985321b20c57f3dc42e5cbd773f2417.png"
+ 
+ 
+diff --git a/driver/razerchromacommon.c b/driver/razerchromacommon.c
+index 3c2c4c5..39c00a0 100644
+--- a/driver/razerchromacommon.c
++++ b/driver/razerchromacommon.c
+@@ -1733,3 +1733,60 @@ struct razer_report razer_chroma_misc_set_hyperpolling_wireless_dongle_multi_ind
+ 
+     return report;
+ }
++
++/**
++ * Set the action of an onboard mouse button (Naga LH 2020)
++ *
++ * Storage selects the profile: 0x01 is the live profile the mouse runs. Layer
++ * 0x00 is standard, 0x01 Hypershift. The action is <type> <length> <data...>:
++ * 0x02 <mod> <usage> for a keyboard key, 0x0D <mod> <usage> <rate hi> <rate lo>
++ * for autofire (rate = 1000000 / delay in ms).
++ *
++ * The device stores the record in flash; it only becomes active after
++ * razer_chroma_misc_commit().
++ */
++struct razer_report razer_chroma_misc_set_button_action(unsigned char variable_storage, unsigned char button, unsigned char layer, const unsigned char *action, unsigned char action_len)
++{
++    struct razer_report report = get_razer_report(0x02, 0x0C, 0x0A);
++
++    if (action_len > 7)
++        action_len = 7;
++
++    report.arguments[0] = variable_storage;
++    report.arguments[1] = button;
++    report.arguments[2] = layer;
++    memcpy(&report.arguments[3], action, action_len);
++
++    return report;
++}
++
++/**
++ * Get the action of an onboard mouse button (Naga LH 2020)
++ *
++ * The reply is the stored record, starting with the profile, button and layer.
++ */
++struct razer_report razer_chroma_misc_get_button_action(unsigned char variable_storage, unsigned char button, unsigned char layer)
++{
++    struct razer_report report = get_razer_report(0x02, 0x8C, 0x0A);
++
++    report.arguments[0] = variable_storage;
++    report.arguments[1] = button;
++    report.arguments[2] = layer;
++
++    return report;
++}
++
++/**
++ * Apply the stored configuration (commit)
++ *
++ * Without this command a freshly written record waits for the next device
++ * enumeration.
++ */
++struct razer_report razer_chroma_misc_commit(void)
++{
++    struct razer_report report = get_razer_report(0x00, 0xB3, 0x01);
++
++    report.arguments[0] = 0x00;
++
++    return report;
++}
+diff --git a/driver/razerchromacommon.h b/driver/razerchromacommon.h
+index a593b9b..9f36b82 100644
+--- a/driver/razerchromacommon.h
++++ b/driver/razerchromacommon.h
+@@ -163,4 +163,8 @@ struct razer_report razer_chroma_misc_set_hyperpolling_wireless_dongle_pair_step
+ struct razer_report razer_chroma_misc_set_hyperpolling_wireless_dongle_pair_step2(unsigned short pid);
+ struct razer_report razer_chroma_misc_set_hyperpolling_wireless_dongle_unpair(unsigned short pid);
+ 
++struct razer_report razer_chroma_misc_set_button_action(unsigned char variable_storage, unsigned char button, unsigned char layer, const unsigned char *action, unsigned char action_len);
++struct razer_report razer_chroma_misc_get_button_action(unsigned char variable_storage, unsigned char button, unsigned char layer);
++struct razer_report razer_chroma_misc_commit(void);
++
+ #endif
+diff --git a/driver/razermouse_driver.c b/driver/razermouse_driver.c
+index 27614af..7fb0101 100644
+--- a/driver/razermouse_driver.c
++++ b/driver/razermouse_driver.c
+@@ -6002,6 +6002,89 @@ static ssize_t razer_attr_write_hyperpolling_wireless_dongle_unpair(struct devic
+     return count;
+ }
+ 
++/**
++ * Read device file "button_action"
++ *
++ * Returns the stored record for the button last selected by writing
++ * "<storage> <button> <layer>": 10 bytes <storage> <button> <layer> <type>
++ * <length> <data...>.
++ */
++static ssize_t razer_attr_read_button_action(struct device *dev, struct device_attribute *attr, char *buf)
++{
++    struct razer_mouse_device *device = dev_get_drvdata(dev);
++    struct razer_report request;
++    struct razer_report response = {0};
++    int err;
++
++    mutex_lock(&device->button_action_lock);
++    request = razer_chroma_misc_get_button_action(device->button_action_query[0],
++                                                  device->button_action_query[1],
++                                                  device->button_action_query[2]);
++    mutex_unlock(&device->button_action_lock);
++
++    /*
++     * The LH 2020 only answers mapping reads when the input class follows the
++     * layer argument; 0x02 selects the thumb grid. A zero there gets no answer.
++     */
++    request.arguments[3] = 0x02;
++    request.transaction_id.id = 0x1F;
++
++    err = razer_send_payload(device, &request, &response);
++    if (err)
++        return err;
++
++    memcpy(buf, response.arguments, 10);
++    return 10;
++}
++
++/**
++ * Write device file "button_action"
++ *
++ * 3 bytes <storage> <button> <layer> select the button that reading returns.
++ * 5-10 bytes <storage> <button> <layer> <type> <length> <data...> also store
++ * and apply an action for it. Only storage 0x01 (the live profile) and the
++ * twelve thumb-grid buttons 0x40..0x4B are known to work on this device.
++ */
++static ssize_t razer_attr_write_button_action(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
++{
++    struct razer_mouse_device *device = dev_get_drvdata(dev);
++    struct razer_report request;
++    struct razer_report response = {0};
++    int err = 0;
++
++    if (count != 3 && (count < 5 || count > 10))
++        return -EINVAL;
++    if ((unsigned char)buf[0] != 0x01)
++        return -EINVAL;
++    if ((unsigned char)buf[1] < 0x40 || (unsigned char)buf[1] > 0x4B)
++        return -EINVAL;
++    if ((unsigned char)buf[2] > 0x01)
++        return -EINVAL;
++
++    mutex_lock(&device->button_action_lock);
++    if (count > 3) {
++        request = razer_chroma_misc_set_button_action((unsigned char)buf[0],
++                                                      (unsigned char)buf[1],
++                                                      (unsigned char)buf[2],
++                                                      (const unsigned char *)&buf[3],
++                                                      count - 3);
++        request.transaction_id.id = 0x1F;
++        err = razer_send_payload(device, &request, &response);
++
++        /* A record only becomes active after an explicit commit. */
++        if (!err) {
++            request = razer_chroma_misc_commit();
++            request.transaction_id.id = 0x1F;
++            err = razer_send_payload(device, &request, &response);
++        }
++    }
++    if (!err)
++        memcpy(device->button_action_query, buf, 3);
++    mutex_unlock(&device->button_action_lock);
++
++    return err ? err : count;
++}
++
+ /**
+  * Set up the device driver files
+  *
+@@ -6016,6 +6099,7 @@ static DEVICE_ATTR(test,                      0220, NULL,
+ static DEVICE_ATTR(poll_rate,                 0660, razer_attr_read_poll_rate,             razer_attr_write_poll_rate);
+ static DEVICE_ATTR(dpi,                       0660, razer_attr_read_dpi,                   razer_attr_write_dpi);
+ static DEVICE_ATTR(dpi_stages,                0660, razer_attr_read_dpi_stages,            razer_attr_write_dpi_stages);
++static DEVICE_ATTR(button_action,            0660, razer_attr_read_button_action,        razer_attr_write_button_action);
+ 
+ static DEVICE_ATTR(device_type,               0440, razer_attr_read_device_type,           NULL);
+ static DEVICE_ATTR(device_mode,               0660, razer_attr_read_device_mode,           razer_attr_write_device_mode);
+@@ -6507,6 +6591,9 @@ static void razer_mouse_init(struct razer_mouse_device *dev, struct hid_device *
+ 
+     // Initialise mutex
+     mutex_init(&dev->lock);
++    mutex_init(&dev->button_action_lock);
++    dev->button_action_query[0] = 0x01; // the live profile
++    dev->button_action_query[1] = 0x40; // first thumb-grid button
+     // Setup values
+     dev->hdev = hdev;
+     dev->usb_vid = usb_dev->descriptor.idVendor;
+@@ -7186,6 +7273,7 @@ static int razer_mouse_probe(struct hid_device *hdev, const struct hid_device_id
+         case USB_DEVICE_ID_RAZER_NAGA_LEFT_HANDED_2020:
+             CREATE_DEVICE_FILE(&hdev->dev, &dev_attr_dpi);
+             CREATE_DEVICE_FILE(&hdev->dev, &dev_attr_poll_rate);
++            CREATE_DEVICE_FILE(&hdev->dev, &dev_attr_button_action);
+ 
+             CREATE_DEVICE_FILE(&hdev->dev, &dev_attr_logo_led_brightness);
+             CREATE_DEVICE_FILE(&hdev->dev, &dev_attr_logo_matrix_effect_wave);
+@@ -8388,6 +8476,7 @@ static void razer_mouse_disconnect(struct hid_device *hdev)
+         case USB_DEVICE_ID_RAZER_NAGA_LEFT_HANDED_2020:
+             device_remove_file(&hdev->dev, &dev_attr_dpi);
+             device_remove_file(&hdev->dev, &dev_attr_poll_rate);
++            device_remove_file(&hdev->dev, &dev_attr_button_action);
+ 
+             device_remove_file(&hdev->dev, &dev_attr_logo_led_brightness);
+             device_remove_file(&hdev->dev, &dev_attr_logo_matrix_effect_wave);
+diff --git a/driver/razermouse_driver.h b/driver/razermouse_driver.h
+index e108a7c..66d8aa3 100644
+--- a/driver/razermouse_driver.h
++++ b/driver/razermouse_driver.h
+@@ -172,6 +172,11 @@ struct razer_mouse_device {
+         unsigned char profile;
+         unsigned char leds;
+     } da3_5g;
++
++    // Naga LH 2020 onboard button actions: the button last selected for reading,
++    // and a lock because selection and read are separate sysfs calls.
++    unsigned char button_action_query[3];
++    struct mutex button_action_lock;
+ };
+ 
+ // Mamba Key Location
+-- 
+2.55.0
+

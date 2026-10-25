@@ -1,0 +1,150 @@
+diff --git a/openrazer_daemon/dbus_services/dbus_methods/__init__.py b/openrazer_daemon/dbus_services/dbus_methods/__init__.py
+index 557399a..695bffe 100644
+--- a/openrazer_daemon/dbus_services/dbus_methods/__init__.py
++++ b/openrazer_daemon/dbus_services/dbus_methods/__init__.py
+@@ -20,3 +20,4 @@ from openrazer_daemon.dbus_services.dbus_methods.accessory import *
+ from openrazer_daemon.dbus_services.dbus_methods.charging_pad_chroma import *
+ from openrazer_daemon.dbus_services.dbus_methods.mouse_scroll_wheel import *
+ from openrazer_daemon.dbus_services.dbus_methods.argb_controller import *
++from openrazer_daemon.dbus_services.dbus_methods.mouse_onboard import *
+diff --git a/openrazer_daemon/dbus_services/dbus_methods/mouse_onboard.py b/openrazer_daemon/dbus_services/dbus_methods/mouse_onboard.py
+new file mode 100644
+index 0000000..91ae53b
+--- /dev/null
++++ b/openrazer_daemon/dbus_services/dbus_methods/mouse_onboard.py
+@@ -0,0 +1,114 @@
++# SPDX-License-Identifier: GPL-2.0-or-later
++
++"""
++Onboard button actions for the Razer Naga Left-Handed Edition 2020.
++
++The device stores one action per button and layer. An action is
++<type> <length> <data...>:
++
++  0x02 <mod> <usage>                      keyboard key (HID usage, modifier bitmap)
++  0x0D <mod> <usage> <rate hi> <rate lo>  autofire, rate = 1000000 / delay in ms
++
++The action is written to flash and only becomes active after the driver's
++explicit commit command, which the sysfs write handles.
++"""
++
++from openrazer_daemon.dbus_services import endpoint
++
++# The Naga LH 2020 exposes the live profile at storage id 1 and twelve
++# thumb-grid buttons.
++LIVE_PROFILE = 1
++THUMB_BUTTONS = tuple(range(0x40, 0x4C))
++
++
++def _check_button(store, button, layer):
++    if store != LIVE_PROFILE:
++        raise ValueError("store has to be 1: the Naga LH 2020 has a single onboard profile")
++    if button not in THUMB_BUTTONS:
++        raise ValueError("button has to be a thumb-grid control instance (0x40..0x4B)")
++    if layer not in (0, 1):
++        raise ValueError("layer has to be 0 (standard) or 1 (Hypershift)")
++
++
++@endpoint('razer.device.onboard', 'getButtons', out_sig='ay')
++def get_onboard_buttons(self):
++    """
++    Get the button instances that support onboard actions
++
++    :return: Button ids
++    :rtype: list of int
++    """
++    self.logger.debug("DBus call get_onboard_buttons")
++
++    return list(self.ONBOARD_BUTTONS)
++
++
++@endpoint('razer.device.onboard', 'getButtonAction', in_sig='yyy', out_sig='ay')
++def get_button_action(self, store, button, layer):
++    """
++    Get the action stored on the device for a button
++
++    :param store: 1 (the live profile)
++    :type store: int
++
++    :param button: Button id, 0x40..0x4B
++    :type button: int
++
++    :param layer: 0 = standard, 1 = Hypershift
++    :type layer: int
++
++    :return: <type> <length> <data...>
++    :rtype: list of int
++    """
++    self.logger.debug("DBus call get_button_action")
++
++    _check_button(store, button, layer)
++
++    return list(_read_button_action(self, store, button, layer))
++
++
++def _read_button_action(self, store, button, layer):
++    driver_path = self.get_driver_path('button_action')
++
++    # Another sysfs writer can change the selected button between write and read
++    for _ in range(3):
++        with open(driver_path, 'wb') as driver_file:
++            driver_file.write(bytes((store, button, layer)))
++        with open(driver_path, 'rb') as driver_file:
++            reply = driver_file.read().ljust(10, b'\0')
++        if reply[0] == store and reply[1] == button:
++            break
++    else:
++        raise OSError("button_action kept returning another button")
++
++    end = max(5 + reply[4], len(reply.rstrip(b'\0')))
++    return reply[3:end]
++
++
++@endpoint('razer.device.onboard', 'setButtonAction', in_sig='yyyay', byte_arrays=True)
++def set_button_action(self, store, button, layer, action):
++    """
++    Store and apply an action on the device for a button
++
++    :param store: 1 (the live profile)
++    :type store: int
++
++    :param button: Button id, 0x40..0x4B
++    :type button: int
++
++    :param layer: 0 = standard, 1 = Hypershift
++    :type layer: int
++
++    :param action: <type> <length> <data...>, 2 to 7 bytes
++    :type action: bytes
++    """
++    self.logger.debug("DBus call set_button_action")
++
++    _check_button(store, button, layer)
++    if len(action) not in range(2, 8):
++        raise ValueError("action has to be between 2 and 7 bytes")
++
++    driver_path = self.get_driver_path('button_action')
++
++    with open(driver_path, 'wb') as driver_file:
++        driver_file.write(bytes((store, button, layer)) + bytes(action))
+diff --git a/openrazer_daemon/hardware/mouse.py b/openrazer_daemon/hardware/mouse.py
+index 39a972c..d53ccaa 100644
+--- a/openrazer_daemon/hardware/mouse.py
++++ b/openrazer_daemon/hardware/mouse.py
+@@ -961,10 +961,15 @@ class RazerNagaLeftHanded2020(__RazerDevice):
+                'get_right_brightness', 'set_right_brightness',
+                'set_right_wave', 'set_right_static', 'set_right_spectrum', 'set_right_none', 'set_right_reactive', 'set_right_breath_random', 'set_right_breath_single', 'set_right_breath_dual',
+                # Custom frame
+-               'set_custom_effect', 'set_key_row']
++               'set_custom_effect', 'set_key_row',
++               # Onboard button actions (thumb grid)
++               'get_onboard_buttons', 'get_button_action', 'set_button_action']
+ 
+     DPI_MAX = 20000
+ 
++    # The twelve thumb-grid buttons, as control instances
++    ONBOARD_BUTTONS = tuple(range(0x40, 0x4C))
++
+     DEVICE_IMAGE = "https://rzrwarranty.s3.amazonaws.com/cee694cd7526df413008167b7566af310985321b20c57f3dc42e5cbd773f2417.png"
+ 
+ 

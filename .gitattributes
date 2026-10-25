@@ -1,0 +1,4 @@
+# Unified diffs contain blank context lines that are a single space (and
+# format-patch adds a signature at the end); those are not whitespace errors.
+contrib/openrazer/*.patch        whitespace=-blank-at-eol,-blank-at-eof
+contrib/openrazer/patches/*.patch whitespace=-blank-at-eol,-blank-at-eof

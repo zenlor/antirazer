@@ -8,6 +8,8 @@
     eachSystem = f:
       nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
   in {
+    overlays.default = import ./contrib/openrazer/overlay.nix;
+
     packages = eachSystem (pkgs: {
       default = import ./nix/package.nix pkgs;
       cimgui = import ./nix/cimgui.nix pkgs;
