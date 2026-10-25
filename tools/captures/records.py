@@ -18,8 +18,8 @@ In --diff mode the last write per (store, ctr, layer) is compared between two
 captures, so a capture made after a reconnect (Synapse pushes its whole table)
 shows every binding that differs from the earlier one.
 
-Set NAGA_DEV to the device address as tshark prints it (default 8.16.0) and
-TSHARK if the binary is not on PATH.
+The Naga's address is detected from its USB ID; set NAGA_DEV to override it.
+Set TSHARK if the binary is not on PATH.
 """
 
 import os
@@ -27,7 +27,7 @@ import subprocess
 import sys
 
 TSHARK = os.environ.get("TSHARK", "tshark")
-DEV = os.environ.get("NAGA_DEV", "8.16.0")
+DEV = os.environ.get("NAGA_DEV")  # None = detect from the capture
 
 TYPE_NAMES = {
     0x00: "default",
@@ -137,11 +137,36 @@ def hexdump_chains(stdout):
     return chains
 
 
-def mapping_records(pcap):
-    """All class-02/command-0C records written to the device, in order."""
+def device_address(pcap):
+    """The device's usbmon address (bus.device), detected from its USB ID."""
+    if DEV:
+        return DEV
+
     result = subprocess.run(
         [TSHARK, "-r", pcap, "-Y",
-         f'usb.dst == "{DEV}" && usb.transfer_type == 0x02 && frame.len == 154',
+         "usb.idVendor == 0x1532 && usb.idProduct == 0x008d",
+         "-T", "fields", "-e", "usb.src", "-e", "usb.dst"],
+        capture_output=True, text=True)
+    addresses = []
+    for line in result.stdout.splitlines():
+        for address in line.split("\t"):
+            address = address.strip()
+            if address and address != "host" and "." in address \
+                    and address not in addresses:
+                addresses.append(address)
+    if not addresses:
+        raise SystemExit(
+            "could not find the Naga (1532:008d) in the capture; "
+            "set NAGA_DEV to the bus.device address (e.g. 8.16.0)")
+    return addresses[0]
+
+
+def mapping_records(pcap):
+    """All class-02/command-0C records written to the device, in order."""
+    dev = device_address(pcap)
+    result = subprocess.run(
+        [TSHARK, "-r", pcap, "-Y",
+         f'usb.dst == "{dev}" && usb.transfer_type == 0x02 && frame.len == 154',
          "-x"],
         capture_output=True, text=True, check=True)
 

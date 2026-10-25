@@ -9,7 +9,7 @@ Two environment variables make the scripts reusable across machines:
 
 | variable | default | meaning |
 |---|---|---|
-| `NAGA_DEV` | `8.16.0` | the device address as `tshark` prints it (`bus.device`, e.g. `8.16.0`) |
+| `NAGA_DEV` | auto | device address (`bus.device`, e.g. `8.16.0`); detected from USB ID `1532:008d`, override if detection fails |
 | `TSHARK` | `tshark` | path to the tshark binary |
 
 Find the address of an existing capture with:
@@ -25,6 +25,14 @@ tshark -r capture.pcapng -Y 'usb.idVendor == 0x1532' -T fields -e usb.src -e usb
 | `capture-usb.sh` | `sudo ./capture-usb.sh out.pcapng [seconds]` — finds the Naga's bus via sysfs and records usbmon until the timeout (or Ctrl-C) |
 
 Load the module first: `sudo modprobe usbmon`.
+
+The capture helper needs the `tshark` from the dev shell, and `sudo` resets
+`PATH`, so pass it explicitly:
+
+```sh
+TSHARK=$(nix develop -c bash -c 'command -v tshark' | tail -1)
+sudo -E env TSHARK="$TSHARK" ./capture-usb.sh /tmp/out.pcapng 60
+```
 
 ## Analysis
 

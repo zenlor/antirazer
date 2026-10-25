@@ -49,7 +49,9 @@ When you are done, untick it again. The host then re-enumerates the device.
 On the host, start a capture on the Naga's bus before you touch Synapse:
 
 ```sh
-sudo ./tools/captures/capture-usb.sh /tmp/baseline.pcapng 60
+# tshark comes from the dev shell; sudo needs the path passed explicitly
+TSHARK=$(nix develop -c bash -c 'command -v tshark' | tail -1)
+sudo -E env TSHARK="$TSHARK" ./tools/captures/capture-usb.sh /tmp/baseline.pcapng 60
 ```
 
 Then, in Synapse:

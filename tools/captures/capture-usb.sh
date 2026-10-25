@@ -11,7 +11,9 @@ set -euo pipefail
 OUT="${1:?usage: capture-usb.sh <out.pcapng> [seconds]}"
 SECS="${2:-0}"
 
-command -v tshark >/dev/null || { echo "tshark not found" >&2; exit 1; }
+TSHARK="${TSHARK:-tshark}"
+command -v "$TSHARK" >/dev/null ||
+	{ echo "tshark not found (set TSHARK=/path/to/tshark, or run inside 'nix develop')" >&2; exit 1; }
 
 BUS=""
 for dev in /sys/bus/usb/devices/*-*; do
@@ -25,7 +27,7 @@ done
 
 echo "capturing usbmon$BUS -> $OUT"
 if [ "$SECS" = "0" ]; then
-	exec tshark -i "usbmon$BUS" -w "$OUT"
+	exec "$TSHARK" -i "usbmon$BUS" -w "$OUT"
 else
-	exec timeout "$SECS" tshark -i "usbmon$BUS" -w "$OUT"
+	exec timeout "$SECS" "$TSHARK" -i "usbmon$BUS" -w "$OUT"
 fi
