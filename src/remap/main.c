@@ -2,6 +2,7 @@
 #include "remap/map.h"
 #include "remap/plan.h"
 #include "remap/run.h"
+#include "remap/config.h"
 
 #include <cJSON.h>
 #include <stdio.h>
@@ -20,15 +21,17 @@ static void usage(FILE *out, const char *prog)
 		"                             sequence triggers to the mouse\n"
 		"  dump [--output FILE]       2020: write the onboard map as JSON\n"
 		"  run FILE [--device PATH] [--model 2020|2014]\n"
-		"                             grab the mouse and execute sequences\n"
-		"                             (2014: all bindings, host-side)\n"
+		"                             grab the mouse and run host-side bindings\n"
+		"  daemon [--config FILE] [--device PATH] [--model 2020|2014]\n"
+		"                             stay resident; SIGHUP reloads the config\n"
 		"  devices                    list Naga event nodes\n"
 		"\n"
 		"Modifiers: ctrl shift alt super rctrl rshift ralt rsuper, joined by '+'.\n"
 		"Actions:   key, mouse:left|right|middle|back|forward, hypershift,\n"
-		"           turbo:<key>@<ms>, default.\n"
-		"Sequences: {\"sequence\":[{\"key\":\"a\"},{\"delay\":50},\n"
+		"           turbo:<key>@<ms>, default, macro:<name>.\n"
+		"Macros:    \"macros\": {\"name\": [{\"key\":\"a\"},{\"delay\":50},\n"
 		"           {\"text\":\"hi\"},{\"mouse\":\"left\"}]}\n"
+		"Wheel:     bindings.normal.wheel-up / wheel-down (host-side).\n"
 		"\n"
 		"See docs/remap.md for the full format.\n",
 		prog);
@@ -254,7 +257,8 @@ static int cmd_run(const char *path, const char *evdev,
 {
 	struct remap_map map;
 	char err[256] = "";
-	size_t sequences = 0;
+	size_t host_bindings = 0;
+	int rc;
 
 	if (remap_map_load(path, &map, err, sizeof err) < 0)
 		return fail(err);
@@ -263,27 +267,97 @@ static int cmd_run(const char *path, const char *evdev,
 		return fail(err);
 	}
 	for (size_t i = 0; i < map.count; i++)
-		if (map.bindings[i].is_sequence)
-			sequences++;
+		if (map.bindings[i].host)
+			host_bindings++;
 
 	if (map.device == REMAP_DEVICE_2020) {
 		if (remap_apply(&map, false, err, sizeof err) < 0) {
 			remap_map_free(&map);
 			return fail(err);
 		}
-		if (!sequences) {
-			printf("no sequences; onboard bindings are applied\n");
+		if (!host_bindings) {
+			printf("no host-side bindings; onboard bindings are applied\n");
 			remap_map_free(&map);
 			return 0;
 		}
 	}
 	print_summary(&map);
-	if (remap_run(&map, map.device, evdev, err, sizeof err) < 0) {
+	rc = remap_run(&map, map.device, evdev, err, sizeof err);
+	if (rc < 0) {
 		remap_map_free(&map);
 		return fail(err);
 	}
+	if (rc == 1)
+		printf("SIGHUP received; use `daemon` to reload in place\n");
 	remap_map_free(&map);
 	return 0;
+}
+
+static int cmd_daemon(const char *config, const char *evdev,
+		      enum remap_device override)
+{
+	char err[256] = "";
+	char default_path[REMAP_PATH_MAX];
+	bool have_pid = false;
+	int status = 0;
+
+	if (!config) {
+		remap_config_path(default_path, sizeof default_path);
+		config = default_path;
+	}
+	if (remap_ensure_config_dir(err, sizeof err) < 0)
+		return fail(err);
+	if (remap_write_pid(err, sizeof err) < 0)
+		return fail(err);
+	have_pid = true;
+	printf("naga-remap: daemon watching %s\n", config);
+	fflush(stdout);
+
+	for (;;) {
+		struct remap_map map;
+		char load_err[256] = "";
+		int rc;
+
+		if (remap_map_load(config, &map, load_err,
+				   sizeof load_err) < 0) {
+			fprintf(stderr, "naga-remap: %s\n", load_err);
+			status = 1;
+			break;
+		}
+		if (prepare_map(&map, override, evdev, load_err,
+				sizeof load_err) < 0) {
+			fprintf(stderr, "naga-remap: %s\n", load_err);
+			remap_map_free(&map);
+			status = 1;
+			break;
+		}
+		if (map.device == REMAP_DEVICE_2020 &&
+		    remap_apply(&map, false, load_err, sizeof load_err) < 0) {
+			fprintf(stderr, "naga-remap: %s\n", load_err);
+			remap_map_free(&map);
+			status = 1;
+			break;
+		}
+		print_summary(&map);
+		fflush(stdout);
+		rc = remap_run(&map, map.device, evdev, load_err,
+			       sizeof load_err);
+		remap_map_free(&map);
+		if (rc == 1) {
+			printf("naga-remap: reloading %s\n", config);
+			fflush(stdout);
+			continue;
+		}
+		if (rc < 0) {
+			fprintf(stderr, "naga-remap: %s\n", load_err);
+			status = 1;
+		}
+		break;
+	}
+
+	if (have_pid)
+		remap_remove_pid();
+	return status;
 }
 
 int main(int argc, char **argv)
@@ -292,6 +366,7 @@ int main(int argc, char **argv)
 	const char *path = NULL;
 	const char *evdev = NULL;
 	const char *output = NULL;
+	const char *config = NULL;
 	bool dry_run = false;
 	enum remap_device model = REMAP_DEVICE_AUTO;
 
@@ -323,6 +398,8 @@ int main(int argc, char **argv)
 			}
 		} else if (!strcmp(argv[i], "--output") && i + 1 < argc) {
 			output = argv[++i];
+		} else if (!strcmp(argv[i], "--config") && i + 1 < argc) {
+			config = argv[++i];
 		} else if (argv[i][0] == '-') {
 			fprintf(stderr, "naga-remap: unknown option %s\n",
 				argv[i]);
@@ -353,6 +430,8 @@ int main(int argc, char **argv)
 			return fail("run needs a map file");
 		return cmd_run(path, evdev, model);
 	}
+	if (!strcmp(command, "daemon"))
+		return cmd_daemon(config ? config : path, evdev, model);
 
 	usage(stderr, argv[0]);
 	return 1;

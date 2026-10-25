@@ -18,9 +18,9 @@ PKG_CONFIG ?= pkg-config
 
 CPPFLAGS   += -D_DEFAULT_SOURCE -Isrc
 CFLAGS     ?= -O2 -g
-CFLAGS     += -std=c11 -Wall -Wextra -Wpedantic
+CFLAGS     += -std=c11 -Wall -Wextra -Wpedantic -MMD -MP
 CXXFLAGS   ?= -O2 -g
-CXXFLAGS   += -std=c++17 -Wall -Wextra
+CXXFLAGS   += -std=c++17 -Wall -Wextra -MMD -MP
 
 # Third-party code is built without our warning set.
 VENDOR_CFLAGS   := -O2 -g -std=c11
@@ -58,7 +58,7 @@ CORE_OBJS := $(BUILD)/naga.o $(BUILD)/naga_keys.o $(BUILD)/naga_ctrls.o
 
 REMAP_OBJS := $(BUILD)/remap_main.o $(BUILD)/remap_map.o \
               $(BUILD)/remap_plan.o $(BUILD)/remap_run.o \
-              $(BUILD)/remap_arena.o
+              $(BUILD)/remap_arena.o $(BUILD)/remap_config.o
 
 TOOLS := naga-probe evtap
 
@@ -92,6 +92,9 @@ naga-mapper: $(CORE_OBJS) $(BUILD)/mapper_main.o
 # ---- naga-remap -----------------------------------------------------------
 
 $(BUILD)/remap_arena.o: src/remap/arena.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/remap_config.o: src/remap/config.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/remap_map.o: src/remap/map.c | $(BUILD)
@@ -128,7 +131,7 @@ $(BUILD)/cbridge.o: src/ui/cbridge.cpp | $(BUILD)
 
 naga-ui: $(CORE_OBJS) $(BUILD)/ui_main.o $(BUILD)/ui_state.o \
          $(BUILD)/ui_layout.o $(BUILD)/ui_keys.o $(BUILD)/cbridge.o \
-         $(CIMGUI_OBJS)
+         $(BUILD)/remap_config.o $(CIMGUI_OBJS)
 	$(CXX) $(LDFLAGS) -o $@ $^ $(SDL3_LIBS) $(LIBUSB_LIBS) -lm -lpthread
 
 # ---- tests ----------------------------------------------------------------
@@ -168,3 +171,5 @@ clean:
 	rm -rf $(BUILD) naga-mapper naga-ui naga-remap $(TOOLS)
 
 .PHONY: all clean install test tools naga-ui
+
+-include $(wildcard $(BUILD)/*.d) $(wildcard $(BUILD)/cimgui/*.d) $(wildcard $(BUILD)/cimgui/imgui/*.d) $(wildcard $(BUILD)/cimgui/imgui/backends/*.d)

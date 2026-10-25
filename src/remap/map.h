@@ -53,6 +53,9 @@ struct remap_binding {
 	int layer; /* 0 normal, 1 hypershift */
 	unsigned ctr;
 
+	/* wheel-up/down: intercepted from REL_WHEEL by the daemon */
+	bool host;
+
 	const char *macro; /* macro:<name> reference, or NULL */
 	bool is_sequence;
 	const struct remap_sequence *seq; /* resolved macro */

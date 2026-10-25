@@ -82,6 +82,8 @@ typedef struct {
 	const char *name; /* short human name: "left", "7", "dpi-up", ... */
 	uint8_t ctr;	  /* control instance in the mapping record */
 	enum naga_group group;
+	/* Not stored onboard: intercept the HID axis in the userspace daemon. */
+	bool host_only;
 } naga_ctrl;
 
 extern const naga_ctrl naga_ctrls[];

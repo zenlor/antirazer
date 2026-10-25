@@ -4,7 +4,9 @@
     "normal": {
       "1": "x",
       "2": "mouse:middle",
-      "3": "macro:copy_paste"
+      "3": "macro:copy_paste",
+      "wheel-up": "pgup",
+      "wheel-down": "pgdn"
     }
   },
   "macros": {

@@ -12,29 +12,33 @@
 
 const naga_ctrl naga_ctrls[] = {
     /* main buttons */
-    {"left", 0x01, NAGA_GROUP_MAIN},
-    {"right", 0x02, NAGA_GROUP_MAIN},
-    {"middle", 0x03, NAGA_GROUP_MAIN},
+    {"left", 0x01, NAGA_GROUP_MAIN, false},
+    {"right", 0x02, NAGA_GROUP_MAIN, false},
+    {"middle", 0x03, NAGA_GROUP_MAIN, false},
+
+    /* wheel rotation is a HID axis, handled by the userspace daemon */
+    {"wheel-up", 0x04, NAGA_GROUP_WHEEL, true},
+    {"wheel-down", 0x05, NAGA_GROUP_WHEEL, true},
 
     /* the wheel click is a main button; scroll up/down is a HID axis */
 
     /* DPI keys */
-    {"dpi-up", 0x0B, NAGA_GROUP_DPI},
-    {"dpi-down", 0x0C, NAGA_GROUP_DPI},
+    {"dpi-up", 0x0B, NAGA_GROUP_DPI, false},
+    {"dpi-down", 0x0C, NAGA_GROUP_DPI, false},
 
     /* thumb grid: three columns, four rows, labelled as on the device */
-    {"1", 0x40, NAGA_GROUP_THUMB},
-    {"2", 0x41, NAGA_GROUP_THUMB},
-    {"3", 0x42, NAGA_GROUP_THUMB},
-    {"4", 0x43, NAGA_GROUP_THUMB},
-    {"5", 0x44, NAGA_GROUP_THUMB},
-    {"6", 0x45, NAGA_GROUP_THUMB},
-    {"7", 0x46, NAGA_GROUP_THUMB},
-    {"8", 0x47, NAGA_GROUP_THUMB},
-    {"9", 0x48, NAGA_GROUP_THUMB},
-    {"0", 0x49, NAGA_GROUP_THUMB},
-    {"=", 0x4B, NAGA_GROUP_THUMB},
-    {"-", 0x4A, NAGA_GROUP_THUMB},
+    {"1", 0x40, NAGA_GROUP_THUMB, false},
+    {"2", 0x41, NAGA_GROUP_THUMB, false},
+    {"3", 0x42, NAGA_GROUP_THUMB, false},
+    {"4", 0x43, NAGA_GROUP_THUMB, false},
+    {"5", 0x44, NAGA_GROUP_THUMB, false},
+    {"6", 0x45, NAGA_GROUP_THUMB, false},
+    {"7", 0x46, NAGA_GROUP_THUMB, false},
+    {"8", 0x47, NAGA_GROUP_THUMB, false},
+    {"9", 0x48, NAGA_GROUP_THUMB, false},
+    {"0", 0x49, NAGA_GROUP_THUMB, false},
+    {"=", 0x4B, NAGA_GROUP_THUMB, false},
+    {"-", 0x4A, NAGA_GROUP_THUMB, false},
 };
 
 const size_t naga_ctrls_count = sizeof naga_ctrls / sizeof naga_ctrls[0];

@@ -55,6 +55,19 @@ static int parse_ctr(const char *s, unsigned *out)
 	return 0;
 }
 
+/* Wheel rotation is not an onboard mapping record. */
+static int reject_host_ctr(unsigned ctr, const char *command)
+{
+	const naga_ctrl *ctrl = naga_ctrl_by_ctr(ctr);
+
+	if (!ctrl || !ctrl->host_only)
+		return 0;
+	fprintf(stderr,
+		"ctr %02X (%s) is host-side; use `%s`/the naga-remap daemon\n",
+		ctr, ctrl->name, command);
+	return 1;
+}
+
 static void print_rec(const naga_ctrl *ctrl, unsigned ctr, const naga_rec *rec)
 {
 	char binding[64];
@@ -94,6 +107,11 @@ int main(int argc, char **argv)
 		for (size_t i = 0; i < naga_ctrls_count; i++) {
 			naga_rec rec;
 
+			if (naga_ctrls[i].host_only) {
+				printf("%-12s ctr %02X  host-side (naga-remap daemon)\n",
+				       naga_ctrls[i].name, naga_ctrls[i].ctr);
+				continue;
+			}
 			if (naga_get_rec(naga_ctrls[i].ctr, &rec)) {
 				print_rec(&naga_ctrls[i], naga_ctrls[i].ctr, &rec);
 				continue;
@@ -110,6 +128,8 @@ int main(int argc, char **argv)
 			fprintf(stderr, "bad ctr: %s\n", argv[2]);
 			goto out;
 		}
+		if (reject_host_ctr(ctr, "naga-remap"))
+			goto out;
 		err = naga_get_rec(ctr, &rec);
 		print_rec(naga_ctrl_by_ctr(ctr), ctr, &rec);
 		if (err) {
@@ -126,6 +146,8 @@ int main(int argc, char **argv)
 			fprintf(stderr, "bad ctr: %s\n", argv[2]);
 			goto out;
 		}
+		if (reject_host_ctr(ctr, "naga-remap"))
+			goto out;
 
 		if (!strcmp(argv[3], "hypershift")) {
 			layer = argc > 4 ? strtol(argv[4], NULL, 16) : 0;
@@ -203,6 +225,8 @@ int main(int argc, char **argv)
 			fprintf(stderr, "bad ctr: %s\n", argv[2]);
 			goto out;
 		}
+		if (reject_host_ctr(ctr, "naga-remap"))
+			goto out;
 		if (usage < 0 || mod < 0 || ms < 1 || ms > 1000000) {
 			fprintf(stderr, "bad key, delay or modifiers\n");
 			goto out;

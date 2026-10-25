@@ -32,8 +32,12 @@ struct plan_entry {
 struct runner {
 	struct libevdev *dev;
 	struct libevdev_uinput *uidev;
+	struct libevdev *wheel_dev;
+	struct libevdev_uinput *wheel_ui;
 	const struct plan_entry *entries;
 	size_t entry_count;
+	const struct remap_plan *wheel_up;
+	const struct remap_plan *wheel_down;
 
 	const struct remap_plan *queue[MAX_QUEUE];
 	size_t qhead, qcount;
@@ -47,6 +51,7 @@ struct runner {
 };
 
 static volatile sig_atomic_t g_stop;
+static volatile sig_atomic_t g_reload;
 
 static void seterr(char *err, size_t errlen, const char *fmt, ...)
 {
@@ -63,6 +68,12 @@ static void on_signal(int sig)
 {
 	(void)sig;
 	g_stop = 1;
+}
+
+static void on_reload(int sig)
+{
+	(void)sig;
+	g_reload = 1;
 }
 
 static double now_ms(void)
@@ -293,6 +304,67 @@ static struct libevdev *find_run_node(enum remap_device model,
 	return best;
 }
 
+/*
+ * The wheel lives on the mouse interface, not on the keyboard node that
+ * carries the side-button trigger keys.
+ */
+static struct libevdev *find_wheel_node(enum remap_device model,
+					const char *skip_path,
+					char *path_out, size_t path_len,
+					char *err, size_t errlen)
+{
+	struct libevdev *best = NULL;
+	int best_score = -1;
+	char best_path[64] = "";
+	int product = model_product(model);
+
+	for (int i = 0; i < MAX_EVENT_NODES; i++) {
+		char path[64];
+		struct libevdev *dev;
+		const char *name;
+		int score = 0;
+
+		node_path(i, path, sizeof path);
+		if (skip_path && !strcmp(path, skip_path))
+			continue;
+		dev = open_node(path);
+		if (!dev)
+			continue;
+		if (libevdev_get_id_vendor(dev) != 0x1532 ||
+		    libevdev_get_id_product(dev) != product ||
+		    !libevdev_has_event_type(dev, EV_REL) ||
+		    !libevdev_has_event_code(dev, EV_REL, REL_WHEEL)) {
+			libevdev_free(dev);
+			continue;
+		}
+		name = libevdev_get_name(dev);
+		if (name && strstr(name, "Naga"))
+			score += 2;
+		if (name && strstr(name, "Keyboard"))
+			score -= 4;
+
+		if (score > best_score) {
+			if (best)
+				libevdev_free(best);
+			best = dev;
+			best_score = score;
+			snprintf(best_path, sizeof best_path, "%s", path);
+		} else {
+			libevdev_free(dev);
+		}
+	}
+
+	if (!best) {
+		seterr(err, errlen,
+		       "no %04x:%04x event node exposes REL_WHEEL; "
+		       "pass --device or check permissions",
+		       0x1532, product);
+		return NULL;
+	}
+	snprintf(path_out, path_len, "%s", best_path);
+	return best;
+}
+
 static int build_entries(const struct remap_map *map,
 			 enum remap_device model, struct arena *arena,
 			 struct plan_entry **out, size_t *out_count, char *err,
@@ -315,6 +387,8 @@ static int build_entries(const struct remap_map *map,
 		const struct remap_binding *b = &map->bindings[i];
 		int code;
 
+		if (b->host)
+			continue;
 		if (model == REMAP_DEVICE_2020 && !b->is_sequence)
 			continue;
 
@@ -350,6 +424,58 @@ fail:
 	return -1;
 }
 
+static int build_wheel_plans(const struct remap_map *map,
+			     struct arena *arena,
+			     struct remap_plan **up,
+			     struct remap_plan **down, char *err,
+			     size_t errlen)
+{
+	*up = NULL;
+	*down = NULL;
+
+	for (size_t i = 0; i < map->count; i++) {
+		const struct remap_binding *b = &map->bindings[i];
+		struct remap_plan **slot;
+		struct remap_plan *plan;
+
+		if (!b->host)
+			continue;
+		if (!strcmp(b->id, "wheel-up"))
+			slot = up;
+		else if (!strcmp(b->id, "wheel-down"))
+			slot = down;
+		else {
+			seterr(err, errlen, "unknown host control \"%s\"",
+			       b->id);
+			goto fail;
+		}
+		if (*slot) {
+			seterr(err, errlen, "duplicate %s binding", b->id);
+			goto fail;
+		}
+		plan = arena_alloc(arena, sizeof *plan,
+				   _Alignof(struct remap_plan));
+		if (!plan) {
+			seterr(err, errlen, "out of memory");
+			goto fail;
+		}
+		if (remap_plan_build(b, plan, err, errlen) < 0)
+			goto fail;
+		*slot = plan;
+	}
+	return 0;
+fail:
+	if (*up) {
+		remap_plan_free(*up);
+		*up = NULL;
+	}
+	if (*down) {
+		remap_plan_free(*down);
+		*down = NULL;
+	}
+	return -1;
+}
+
 static void copy_capabilities(struct libevdev *src, struct libevdev *dst)
 {
 	static const struct {
@@ -372,9 +498,21 @@ static void copy_capabilities(struct libevdev *src, struct libevdev *dst)
 	}
 }
 
+static void enable_plan_codes(struct libevdev *copy,
+			      const struct remap_plan *plan)
+{
+	if (!plan)
+		return;
+	for (size_t j = 0; j < plan->count; j++)
+		if (plan->events[j].type == EV_KEY)
+			libevdev_enable_event_code(copy, EV_KEY,
+						   plan->events[j].code, NULL);
+}
+
 static int make_uinput(struct libevdev *src, const struct plan_entry *entries,
-		       size_t count, struct libevdev_uinput **out, char *err,
-		       size_t errlen)
+		       size_t count, const struct remap_plan *extra1,
+		       const struct remap_plan *extra2,
+		       struct libevdev_uinput **out, char *err, size_t errlen)
 {
 	static const int buttons[] = {BTN_LEFT, BTN_RIGHT, BTN_MIDDLE, BTN_SIDE,
 				      BTN_EXTRA};
@@ -401,11 +539,9 @@ static int make_uinput(struct libevdev *src, const struct plan_entry *entries,
 	for (size_t i = 0; i < sizeof buttons / sizeof buttons[0]; i++)
 		libevdev_enable_event_code(copy, EV_KEY, buttons[i], NULL);
 	for (size_t i = 0; i < count; i++)
-		for (size_t j = 0; j < entries[i].plan.count; j++)
-			if (entries[i].plan.events[j].type == EV_KEY)
-				libevdev_enable_event_code(
-				    copy, EV_KEY, entries[i].plan.events[j].code,
-				    NULL);
+		enable_plan_codes(copy, &entries[i].plan);
+	enable_plan_codes(copy, extra1);
+	enable_plan_codes(copy, extra2);
 
 	rc = libevdev_uinput_create_from_device(
 	    copy, LIBEVDEV_UINPUT_OPEN_MANAGED, out);
@@ -523,6 +659,8 @@ static double next_deadline(const struct runner *r, double now)
 
 static void cleanup(struct runner *r)
 {
+	bool same_uinput;
+
 	if (r->uidev) {
 		bool wrote = false;
 
@@ -537,23 +675,112 @@ static void cleanup(struct runner *r)
 		if (wrote)
 			(void)libevdev_uinput_write_event(r->uidev, EV_SYN,
 							  SYN_REPORT, 0);
-		libevdev_uinput_destroy(r->uidev);
-		r->uidev = NULL;
 	}
+	same_uinput = r->wheel_ui && r->uidev == r->wheel_ui;
+	if (r->uidev)
+		libevdev_uinput_destroy(r->uidev);
+	r->uidev = NULL;
+	if (r->wheel_ui && !same_uinput)
+		libevdev_uinput_destroy(r->wheel_ui);
+	r->wheel_ui = NULL;
 	if (r->dev) {
 		libevdev_grab(r->dev, LIBEVDEV_UNGRAB);
 		libevdev_free(r->dev);
 		r->dev = NULL;
 	}
+	if (r->wheel_dev) {
+		libevdev_grab(r->wheel_dev, LIBEVDEV_UNGRAB);
+		libevdev_free(r->wheel_dev);
+		r->wheel_dev = NULL;
+	}
+}
+
+static int handle_key_events(struct runner *r, char *err, size_t errlen)
+{
+	for (;;) {
+		struct input_event ev;
+		int rc = libevdev_next_event(
+		    r->dev, LIBEVDEV_READ_FLAG_NORMAL, &ev);
+
+		if (rc == -EAGAIN)
+			break;
+		if (rc == -EINTR)
+			continue;
+		if (rc < 0) {
+			seterr(err, errlen, "read: %s", strerror(-rc));
+			return -1;
+		}
+		if (ev.type == EV_SYN && ev.code == SYN_DROPPED)
+			continue;
+		if (ev.type == EV_KEY) {
+			const struct remap_plan *plan =
+			    trigger_plan(r, ev.code);
+
+			if (plan) {
+				if (ev.value == 1)
+					enqueue(r, plan);
+				continue; /* swallow trigger down/up */
+			}
+		}
+		if (libevdev_uinput_write_event(r->uidev, ev.type, ev.code,
+						ev.value) < 0) {
+			seterr(err, errlen, "uinput write failed");
+			return -1;
+		}
+	}
+	return 0;
+}
+
+static int handle_wheel_events(struct runner *r, char *err, size_t errlen)
+{
+	for (;;) {
+		struct input_event ev;
+		int rc = libevdev_next_event(
+		    r->wheel_dev, LIBEVDEV_READ_FLAG_NORMAL, &ev);
+
+		if (rc == -EAGAIN)
+			break;
+		if (rc == -EINTR)
+			continue;
+		if (rc < 0) {
+			seterr(err, errlen, "wheel read: %s", strerror(-rc));
+			return -1;
+		}
+		if (ev.type == EV_SYN && ev.code == SYN_DROPPED)
+			continue;
+		if (ev.type == EV_REL &&
+		    (ev.code == REL_WHEEL || ev.code == REL_WHEEL_HI_RES)) {
+			const struct remap_plan *plan = NULL;
+
+			if (ev.value > 0)
+				plan = r->wheel_up;
+			else if (ev.value < 0)
+				plan = r->wheel_down;
+			if (plan) {
+				if (ev.code == REL_WHEEL)
+					enqueue(r, plan);
+				continue;
+			}
+		}
+		if (libevdev_uinput_write_event(r->wheel_ui, ev.type, ev.code,
+						ev.value) < 0) {
+			seterr(err, errlen, "wheel uinput write failed");
+			return -1;
+		}
+	}
+	return 0;
 }
 
 static int run_loop(struct runner *r, char *err, size_t errlen)
 {
-	while (!g_stop && !r->stopped) {
+	while (!g_stop && !g_reload && !r->stopped) {
 		double now = now_ms();
 		double deadline;
 		int timeout;
-		struct pollfd pfd;
+		struct pollfd pfd[2];
+		int nfds = 0;
+		int kidx = -1;
+		int widx = -1;
 
 		run_due(r, now);
 		deadline = next_deadline(r, now);
@@ -563,50 +790,35 @@ static int run_loop(struct runner *r, char *err, size_t errlen)
 		if (timeout > 200)
 			timeout = 200;
 
-		pfd.fd = libevdev_get_fd(r->dev);
-		pfd.events = POLLIN;
-		pfd.revents = 0;
-		if (poll(&pfd, 1, timeout) < 0) {
+		if (r->dev) {
+			kidx = nfds;
+			pfd[nfds].fd = libevdev_get_fd(r->dev);
+			pfd[nfds].events = POLLIN;
+			pfd[nfds].revents = 0;
+			nfds++;
+		}
+		if (r->wheel_dev) {
+			widx = nfds;
+			pfd[nfds].fd = libevdev_get_fd(r->wheel_dev);
+			pfd[nfds].events = POLLIN;
+			pfd[nfds].revents = 0;
+			nfds++;
+		}
+		if (!nfds)
+			break;
+
+		if (poll(pfd, (nfds_t)nfds, timeout) < 0) {
 			if (errno == EINTR)
 				continue;
 			seterr(err, errlen, "poll: %s", strerror(errno));
 			return -1;
 		}
-		if (!(pfd.revents & POLLIN))
-			continue;
-
-		for (;;) {
-			struct input_event ev;
-			int rc = libevdev_next_event(
-			    r->dev, LIBEVDEV_READ_FLAG_NORMAL, &ev);
-
-			if (rc == -EAGAIN)
-				break;
-			if (rc == -EINTR)
-				continue;
-			if (rc < 0) {
-				seterr(err, errlen, "read: %s", strerror(-rc));
-				return -1;
-			}
-			if (ev.type == EV_SYN && ev.code == SYN_DROPPED)
-				continue;
-
-			if (ev.type == EV_KEY) {
-				const struct remap_plan *plan =
-				    trigger_plan(r, ev.code);
-
-				if (plan) {
-					if (ev.value == 1)
-						enqueue(r, plan);
-					continue; /* swallow trigger down/up */
-				}
-			}
-			if (libevdev_uinput_write_event(r->uidev, ev.type,
-							ev.code, ev.value) < 0) {
-				seterr(err, errlen, "uinput write failed");
-				return -1;
-			}
-		}
+		if (kidx >= 0 && (pfd[kidx].revents & POLLIN) &&
+		    handle_key_events(r, err, errlen) < 0)
+			return -1;
+		if (widx >= 0 && (pfd[widx].revents & POLLIN) &&
+		    handle_wheel_events(r, err, errlen) < 0)
+			return -1;
 	}
 	return 0;
 }
@@ -616,9 +828,12 @@ int remap_run(const struct remap_map *map, enum remap_device model,
 {
 	struct plan_entry *entries = NULL;
 	size_t entry_count = 0;
+	struct remap_plan *wheel_up = NULL;
+	struct remap_plan *wheel_down = NULL;
 	struct runner r;
 	struct arena arena;
 	char path[64] = "";
+	char wheel_path[64] = "";
 	int codes[256];
 	int rc;
 
@@ -632,13 +847,28 @@ int remap_run(const struct remap_map *map, enum remap_device model,
 		arena_free(&arena);
 		return -1;
 	}
-	if (entry_count == 0) {
+	if (build_wheel_plans(map, &arena, &wheel_up, &wheel_down, err,
+			      errlen) < 0) {
+		for (size_t i = 0; i < entry_count; i++)
+			remap_plan_free(&entries[i].plan);
 		arena_free(&arena);
-		return 0;
+		return -1;
+	}
+	if (entry_count == 0 && !wheel_up && !wheel_down) {
+		/* Daemon mode: stay alive waiting for SIGHUP. */
+		g_stop = 0;
+		g_reload = 0;
+		signal(SIGINT, on_signal);
+		signal(SIGTERM, on_signal);
+		signal(SIGHUP, on_reload);
+		while (!g_stop && !g_reload)
+			pause();
+		arena_free(&arena);
+		return g_reload ? 1 : 0;
 	}
 	if (entry_count > sizeof codes / sizeof codes[0]) {
 		seterr(err, errlen, "too many triggers");
-		goto fail_entries;
+		goto fail;
 	}
 	for (size_t i = 0; i < entry_count; i++)
 		codes[i] = entries[i].code;
@@ -646,38 +876,74 @@ int remap_run(const struct remap_map *map, enum remap_device model,
 	memset(&r, 0, sizeof r);
 	r.entries = entries;
 	r.entry_count = entry_count;
-	r.dev = find_run_node(model, evdev, codes, entry_count, path,
-			      sizeof path, err, errlen);
-	if (!r.dev)
-		goto fail_entries;
-	if (libevdev_grab(r.dev, LIBEVDEV_GRAB) < 0) {
-		seterr(err, errlen, "cannot grab %s: %s", path,
-		       strerror(errno));
-		goto fail_dev;
-	}
-	if (make_uinput(r.dev, entries, entry_count, &r.uidev, err,
-			errlen) < 0)
-		goto fail_dev;
+	r.wheel_up = wheel_up;
+	r.wheel_down = wheel_down;
 
-	printf("naga-remap: %s on %s, %zu trigger(s)\n",
-	       libevdev_get_name(r.dev), path, entry_count);
+	if (entry_count > 0) {
+		r.dev = find_run_node(model, evdev, codes, entry_count, path,
+				      sizeof path, err, errlen);
+		if (!r.dev)
+			goto fail;
+		if (libevdev_grab(r.dev, LIBEVDEV_GRAB) < 0) {
+			seterr(err, errlen, "cannot grab %s: %s", path,
+			       strerror(errno));
+			goto fail;
+		}
+		if (make_uinput(r.dev, entries, entry_count, wheel_up,
+				wheel_down, &r.uidev, err, errlen) < 0)
+			goto fail;
+	}
+	if (wheel_up || wheel_down) {
+		r.wheel_dev = find_wheel_node(model,
+					      entry_count ? path : NULL,
+					      wheel_path, sizeof wheel_path,
+					      err, errlen);
+		if (!r.wheel_dev)
+			goto fail;
+		if (libevdev_grab(r.wheel_dev, LIBEVDEV_GRAB) < 0) {
+			seterr(err, errlen, "cannot grab %s: %s", wheel_path,
+			       strerror(errno));
+			goto fail;
+		}
+		if (make_uinput(r.wheel_dev, NULL, 0, wheel_up, wheel_down,
+				&r.wheel_ui, err, errlen) < 0)
+			goto fail;
+	}
+	if (!r.uidev)
+		r.uidev = r.wheel_ui;
+
+	if (r.dev)
+		printf("naga-remap: %s on %s, %zu trigger(s)\n",
+		       libevdev_get_name(r.dev), path, entry_count);
+	if (r.wheel_dev)
+		printf("naga-remap: wheel on %s%s%s\n", wheel_path,
+		       wheel_up ? ", up mapped" : "",
+		       wheel_down ? ", down mapped" : "");
 	printf("  Ctrl-C to stop\n");
 	fflush(stdout);
 
 	g_stop = 0;
+	g_reload = 0;
 	signal(SIGINT, on_signal);
 	signal(SIGTERM, on_signal);
+	signal(SIGHUP, on_reload);
 	rc = run_loop(&r, err, errlen);
 	cleanup(&r);
+	if (wheel_up)
+		remap_plan_free(wheel_up);
+	if (wheel_down)
+		remap_plan_free(wheel_down);
 	for (size_t i = 0; i < entry_count; i++)
 		remap_plan_free(&entries[i].plan);
 	arena_free(&arena);
-	return rc;
+	return g_reload ? 1 : rc;
 
-fail_dev:
-	libevdev_grab(r.dev, LIBEVDEV_UNGRAB);
-	libevdev_free(r.dev);
-fail_entries:
+fail:
+	cleanup(&r);
+	if (wheel_up)
+		remap_plan_free(wheel_up);
+	if (wheel_down)
+		remap_plan_free(wheel_down);
 	for (size_t i = 0; i < entry_count; i++)
 		remap_plan_free(&entries[i].plan);
 	arena_free(&arena);

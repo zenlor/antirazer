@@ -7,7 +7,9 @@
       "3": "mouse:middle",
       "4": "hypershift",
       "5": "turbo:f5@3000",
-      "6": "macro:hello"
+      "6": "macro:hello",
+      "wheel-up": "pgup",
+      "wheel-down": "pgdn"
     },
     "hypershift": {
       "1": "mouse:back"

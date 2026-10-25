@@ -757,7 +757,23 @@ int remap_map_validate(struct remap_map *map, char *err, size_t errlen)
 			b->is_sequence = true;
 		}
 
-		if (map->device == REMAP_DEVICE_2020) {
+		ctrl = naga_ctrl_by_name(b->id);
+		b->host = ctrl && ctrl->host_only;
+		if (b->host) {
+			b->ctr = ctrl->ctr;
+			if (b->layer != 0) {
+				seterr(err, errlen,
+				       "wheel up/down have no hypershift layer");
+				return -1;
+			}
+			if (!b->is_sequence &&
+			    b->type != NAGA_ASSIGN_KEY &&
+			    b->type != NAGA_ASSIGN_MOUSE) {
+				seterr(err, errlen,
+				       "wheel up/down support key, mouse or macro");
+				return -1;
+			}
+		} else if (map->device == REMAP_DEVICE_2020) {
 			if (b->layer != 0 && b->layer != 1) {
 				seterr(err, errlen, "bad layer for \"%s\"",
 				       b->id);
@@ -840,6 +856,13 @@ int remap_map_validate(struct remap_map *map, char *err, size_t errlen)
 			       t->layer);
 			return -1;
 		}
+		if (b->host) {
+			seterr(err, errlen,
+			       "trigger for \"%s\" is unused; wheel is "
+			       "event-driven",
+			       t->id);
+			return -1;
+		}
 		if (map->device == REMAP_DEVICE_2020 && !b->is_sequence) {
 			seterr(err, errlen,
 			       "trigger for \"%s\" needs a macro binding",
@@ -891,6 +914,9 @@ int remap_map_assign_triggers(struct remap_map *map, char *err, size_t errlen)
 	for (size_t i = 0; i < map->count; i++) {
 		struct remap_binding *b = &map->bindings[i];
 		const char *explicit = find_trigger(map, b->id, b->layer);
+
+		if (b->host)
+			continue;
 
 		if (map->device == REMAP_DEVICE_2020) {
 			if (!b->is_sequence) {
@@ -969,7 +995,7 @@ int remap_map_assign_triggers(struct remap_map *map, char *err, size_t errlen)
 		for (size_t i = 0; i < map->count; i++) {
 			const struct remap_binding *b = &map->bindings[i];
 
-			if (b->is_sequence)
+			if (b->is_sequence || b->host)
 				continue;
 			if (b->type != NAGA_ASSIGN_KEY &&
 			    b->type != NAGA_ASSIGN_TURBO)
@@ -1081,6 +1107,11 @@ int remap_apply(const struct remap_map *map, bool dry_run, char *err,
 
 		snprintf(label, sizeof label, "%s%s", b->id,
 			 b->layer ? "@hypershift" : "");
+		if (b->host) {
+			printf("%s %s -> host-side (daemon)\n",
+			       dry_run ? "would bind" : "bind", b->id);
+			continue;
+		}
 		if (b->is_sequence) {
 			printf("%s %s -> %s (macro; needs run)\n",
 			       dry_run ? "would bind" : "bind", label,

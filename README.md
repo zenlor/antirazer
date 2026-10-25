@@ -12,8 +12,8 @@ The mapping tools share one device core:
 | | |
 |---|---|
 | `naga-mapper` | scriptable command-line tool |
-| `naga-ui` | small SDL3 + cimgui window with a clickable drawing of the mouse |
-| `naga-remap` | apply a JSON map; run sequences/macros host-side |
+| `naga-ui` | small SDL3 + cimgui window with a clickable drawing, host-side wheel controls and daemon config export |
+| `naga-remap` | JSON maps, onboard apply, host-side macros and a reloadable daemon |
 
 ## Status
 
@@ -26,9 +26,11 @@ The mapping tools share one device core:
 | mouse-button actions | decoded from captures (type `01`); implemented, writes not yet exercised on hardware |
 | DPI set | implemented (`04/05`), not verified on hardware yet |
 | hypershift layer | switch action decoded (type `0B`, inferred) and implemented; hold-vs-toggle behaviour unverified |
-| main buttons, wheel, DPI keys | default actions decoded; writing new actions to them untested (wheel up/down are not assignable) |
+| main buttons, DPI keys | default actions decoded; DPI keys are onboard-remappable through the same record path |
+| wheel up/down | host-side via the daemon (`REL_WHEEL` interception); not an onboard control |
 | file-driven remapping | `naga-remap`: JSON map, onboard apply for the 2020, host-side run for both |
 | sequences / macros | host-side via `naga-remap run`; the firmware stores single actions only |
+| daemon | `naga-remap daemon`; config in `$XDG_CONFIG_HOME/naga-remap/config.json`, SIGHUP reload |
 | profiles, lighting | not decoded |
 
 Everything below that touches the device is the mapping domain (`02/0C` write,
@@ -105,10 +107,13 @@ naga-ui
 
 The left column shows the thumb panel and a top view of the mouse; every
 control is clickable and its current binding is drawn on it (hover for a
-tooltip). The right column edits the selected control: its binding (keyboard
-key, mouse button or Hypershift switch), modifiers, layer, turbo with delay,
-then **Write + commit**. DPI sits below the drawing. The status line reports
-each device operation.
+tooltip). Wheel up/down are shown as host-side controls and are saved in the
+daemon config rather than the mouse's flash. The right column edits the
+selected control: its binding (keyboard key, mouse button or Hypershift
+switch), modifiers, layer, turbo with delay, then **Write + commit** (or
+**Save for daemon** for the wheel). DPI and the **Write daemon config +
+reload** button sit below the drawing. The status line reports each device
+operation.
 
 The binding field has three ways in:
 
@@ -130,19 +135,21 @@ exits — handy for smoke tests on headless machines.
 
 ## Remapping from a file
 
-`naga-remap` applies a JSON map and runs sequences host-side:
+`naga-remap` applies a JSON map and runs host-side bindings:
 
 ```sh
 naga-remap validate examples/naga-2020.json
 naga-remap apply examples/naga-2020.json     # 2020: onboard single actions
-naga-remap run examples/naga-2020.json       # apply + run sequences
+naga-remap run examples/naga-2020.json       # apply + run host-side bindings
 naga-remap run examples/naga-2014.json --model 2014
+naga-remap daemon                            # reloads on SIGHUP
 ```
 
-The file is an `id -> content` object, with string actions or `sequence`
-objects. See [docs/remap.md](docs/remap.md) for ids, actions, sequence steps
-and trigger assignment. `run` needs root (or access to `/dev/uinput` and the
-event node); Ctrl-C restores the grabbed device.
+The file has `bindings.normal`, an optional `bindings.hypershift`, named
+`macros`, and optional `triggers`. See [docs/remap.md](docs/remap.md) for ids,
+actions, macros, wheel bindings and trigger assignment. `run`/`daemon` need
+root (or access to `/dev/uinput` and the event nodes); Ctrl-C restores the
+grabbed devices.
 
 ## How it works
 
@@ -247,7 +254,8 @@ src/naga.c        USB transport, request encoding, mapping/DPI writes
 src/naga_keys.c   HID usage <-> name, modifier parsing, binding rendering
 src/naga_ctrls.c  the control table (names, ctr values, groups)
 src/mapper/       naga-mapper CLI
-src/remap/        naga-remap: JSON map, event planner, libevdev/uinput runner
+src/remap/        naga-remap: JSON map, planner, config/PID, libevdev/uinput
+                  runner and daemon
 src/ui/           naga-ui: ui_state.c (logic), ui_layout.c (ImGui),
                   ui_keys.c (layout-aware key names and capture), main.c (SDL3)
 tests/            unit tests for the key/control and remap code

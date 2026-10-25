@@ -57,6 +57,20 @@ static const char *map_2014 =
     "  }\n"
     "}\n";
 
+static const char *map_wheel =
+    "{\n"
+    "  \"device\": \"2020\",\n"
+    "  \"bindings\": {\n"
+    "    \"normal\": {\n"
+    "      \"wheel-up\": \"x\",\n"
+    "      \"wheel-down\": \"macro:scroll\"\n"
+    "    }\n"
+    "  },\n"
+    "  \"macros\": {\n"
+    "    \"scroll\": [{\"key\": \"a\"}, {\"delay\": 10}]\n"
+    "  }\n"
+    "}\n";
+
 static void load_ok(const char *json, struct remap_map *map)
 {
 	char err[256] = "";
@@ -236,6 +250,48 @@ out:
 	remap_map_free(&map);
 }
 
+static void test_host_wheel(void)
+{
+	struct remap_map map;
+	struct remap_binding *b;
+	struct remap_plan plan;
+	char err[256] = "";
+
+	load_ok(map_wheel, &map);
+	prepare_ok(&map, REMAP_DEVICE_2020);
+	if (failures)
+		goto out;
+
+	b = find_binding(&map, "wheel-up", 0);
+	CHECK(b && b->host && !b->is_sequence);
+	CHECK(b && b->trigger_usage == 0 && b->trigger[0] == '\0');
+	b = find_binding(&map, "wheel-down", 0);
+	CHECK(b && b->host && b->is_sequence && b->seq);
+	CHECK(b && b->seq && b->seq->count == 2);
+	if (b && remap_plan_build(b, &plan, err, sizeof err) == 0) {
+		CHECK(plan.count == 2);
+		CHECK(plan.duration_ms == 30);
+		remap_plan_free(&plan);
+	} else {
+		fprintf(stderr, "wheel plan failed: %s\n", err);
+		failures++;
+	}
+	CHECK(remap_apply(&map, true, err, sizeof err) == 0);
+
+out:
+	remap_map_free(&map);
+
+	load_ok("{\"device\":\"2014\",\"bindings\":{\"normal\":"
+		"{\"wheel-up\":\"x\"}}}",
+		&map);
+	prepare_ok(&map, REMAP_DEVICE_2014);
+	if (!failures) {
+		b = find_binding(&map, "wheel-up", 0);
+		CHECK(b && b->host && b->trigger[0] == '\0');
+	}
+	remap_map_free(&map);
+}
+
 static void expect_load_fail(const char *json)
 {
 	struct remap_map map;
@@ -292,6 +348,17 @@ static void test_invalid(void)
 			     "{\"1\":\"x\"}},\"triggers\":{\"normal\":"
 			     "{\"9\":\"f13\"}}}",
 			     REMAP_DEVICE_2020);
+	expect_validate_fail("{\"device\":\"2020\",\"bindings\":{\"normal\":"
+			     "{\"wheel-up\":\"x\"}},\"triggers\":{\"normal\":"
+			     "{\"wheel-up\":\"f13\"}}}",
+			     REMAP_DEVICE_2020);
+	expect_validate_fail("{\"device\":\"2020\",\"bindings\":{\"normal\":"
+			     "{\"1\":\"x\"},\"hypershift\":"
+			     "{\"wheel-up\":\"x\"}}}",
+			     REMAP_DEVICE_2020);
+	expect_validate_fail("{\"device\":\"2020\",\"bindings\":{\"normal\":"
+			     "{\"wheel-up\":\"turbo:f5@100\"}}}",
+			     REMAP_DEVICE_2020);
 }
 
 static void test_key_mapping(void)
@@ -313,6 +380,7 @@ int main(void)
 	test_sequence_plan();
 	test_single_plan();
 	test_default_trigger();
+	test_host_wheel();
 	test_invalid();
 	test_key_mapping();
 

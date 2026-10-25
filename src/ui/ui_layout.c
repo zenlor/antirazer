@@ -122,17 +122,14 @@ static void draw_region(ui_state *s, ImDrawList *dl, const canvas *c,
 	text_centered(dl, V(center.x, center.y - (show_binding ? 7.0f : 0.0f)),
 		      COL_TEXT, label);
 
-	if (show_binding && s->rec_ok[index]) {
-		naga_binding_name(&s->recs[index], binding, sizeof binding);
-		text_centered(dl, V(center.x, center.y + 7.0f), COL_MUTED, binding);
-	}
+	ui_state_binding_string_at(s, index, binding, sizeof binding);
+	if (show_binding && binding[0] && strcmp(binding, "?"))
+		text_centered(dl, V(center.x, center.y + 7.0f), COL_MUTED,
+			      binding);
 
-	if (hovered) {
-		if (s->rec_ok[index])
-			naga_binding_name(&s->recs[index], binding, sizeof binding);
+	if (hovered)
 		igSetTooltip("%s (ctr %02X)\n%s", ctrl->name, ctrl->ctr,
 			     binding[0] ? binding : "not read");
-	}
 }
 
 static void draw_thumb_panel(ui_state *s, ImDrawList *dl, canvas *c)
@@ -162,7 +159,9 @@ static void draw_top_view(ui_state *s, ImDrawList *dl, canvas *c)
 	} regions[] = {
 	    {"left", 82.0f, 10.0f, 38.0f, 58.0f, "L"},
 	    {"right", 154.0f, 10.0f, 38.0f, 58.0f, "R"},
+	    {"wheel-up", 122.0f, 10.0f, 30.0f, 16.0f, "^"},
 	    {"middle", 124.0f, 28.0f, 26.0f, 24.0f, "M"},
+	    {"wheel-down", 122.0f, 54.0f, 30.0f, 14.0f, "v"},
 	    {"dpi-up", 122.0f, 74.0f, 30.0f, 16.0f, "DPI+"},
 	    {"dpi-down", 122.0f, 94.0f, 30.0f, 16.0f, "DPI-"},
 	};
@@ -269,6 +268,11 @@ static void draw_dpi(ui_state *s)
 	if (igButton("Apply DPI", V(110.0f, 0.0f)))
 		ui_state_apply_dpi(s);
 	igEndDisabled();
+
+	igSpacing();
+	if (igButton("Write daemon config + reload", V(250.0f, 0.0f)))
+		ui_state_export_config(s);
+	igTextDisabled("~/.config/naga-remap/config.json");
 }
 
 static bool contains_ci(const char *haystack, const char *needle)
@@ -370,7 +374,8 @@ static void draw_key_combo(ui_state *s, int current, unsigned mod)
 			}
 			igPopID();
 		}
-		if (contains_ci("Hypershift", s->key_filter)) {
+		if (contains_ci("Hypershift", s->key_filter) &&
+		    !ui_state_selected_host(s)) {
 			if (!actions_header) {
 				igTextDisabled("mouse & layer actions");
 				any = true;
@@ -440,19 +445,19 @@ static void draw_editor(ui_state *s)
 	} else {
 		igText("%s", ctrl->name);
 		igSameLine(0.0f, 10.0f);
-		igTextDisabled("ctr %02X", ctrl->ctr);
+		if (ctrl->host_only)
+			igTextDisabled("host-side");
+		else
+			igTextDisabled("ctr %02X", ctrl->ctr);
 		igSameLine(0.0f, 10.0f);
-		if (!s->rec_ok[s->selected])
+		if (!ctrl->host_only && !s->rec_ok[s->selected])
 			igTextDisabled("(unreadable)");
 
-		if (s->rec_ok[s->selected])
-			naga_binding_name(&s->recs[s->selected], binding,
-					  sizeof binding);
-		else
-			snprintf(binding, sizeof binding, "?");
+		ui_state_binding_string_at(s, s->selected, binding,
+					   sizeof binding);
 		igText("current: %s", binding);
 
-		igBeginDisabled(!s->connected);
+		igBeginDisabled(!s->connected && !ctrl->host_only);
 		igSpacing();
 
 		mod = (s->mod_ctrl ? 0x01 : 0) | (s->mod_shift ? 0x02 : 0) |
@@ -498,9 +503,11 @@ static void draw_editor(ui_state *s)
 		igEndDisabled();
 
 		igSetNextItemWidth(150.0f);
+		igBeginDisabled(ctrl->host_only);
 		igCombo_Str("layer", &s->layer, "normal\0hypershift\0", 0);
+		igEndDisabled();
 
-		igBeginDisabled(s->action != UI_ACTION_KEY);
+		igBeginDisabled(s->action != UI_ACTION_KEY || ctrl->host_only);
 		igCheckbox("turbo (autofire while held)", &s->turbo);
 		igEndDisabled();
 		if (s->turbo && s->action == UI_ACTION_KEY) {
@@ -514,14 +521,20 @@ static void draw_editor(ui_state *s)
 
 		igSpacing();
 		igBeginDisabled(!ui_state_can_apply(s));
-		if (igButton("Write + commit", V(150.0f, 0.0f)))
+		if (igButton(ctrl->host_only ? "Save for daemon" :
+						   "Write + commit",
+			     V(150.0f, 0.0f)))
 			ui_state_apply(s);
 		igEndDisabled();
 		igSameLine(0.0f, 10.0f);
 		if (igButton("Re-read", V(90.0f, 0.0f)))
 			ui_state_refresh_selected(s);
-		igTextWrapped("Writes are stored in the mouse and take effect "
-			      "immediately.");
+		if (ctrl->host_only)
+			igTextWrapped("Saved in the daemon config; use Write "
+				      "daemon config below.");
+		else
+			igTextWrapped("Writes are stored in the mouse and take "
+				      "effect immediately.");
 		igEndDisabled();
 	}
 

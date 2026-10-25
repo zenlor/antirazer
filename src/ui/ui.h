@@ -21,12 +21,22 @@
 #define UI_MAX_CTRLS 32
 #define UI_KEY_MAX 32
 #define UI_STATUS_MAX 160
+#define UI_HOST_COUNT 2
 
 /* What the editor is currently building. */
 enum ui_action {
 	UI_ACTION_KEY,
 	UI_ACTION_MOUSE,
 	UI_ACTION_HYPERSHIFT,
+};
+
+/* Host-side wheel binding, stored in the daemon config instead of onboard. */
+struct ui_host_binding {
+	enum ui_action action;
+	unsigned usage;
+	unsigned mod;
+	int mouse;
+	bool set;
 };
 
 typedef struct {
@@ -49,6 +59,9 @@ typedef struct {
 	bool turbo;
 	float turbo_ms;
 	int layer; /* enum naga_layer */
+
+	/* wheel-up/down: host-side, exported to the daemon config */
+	struct ui_host_binding host[UI_HOST_COUNT];
 
 	/* device DPI */
 	int dpi_x;
@@ -100,6 +113,14 @@ void ui_state_set_status(ui_state *s, bool is_error, const char *fmt, ...)
 
 const naga_ctrl *ui_state_selected(const ui_state *s);
 bool ui_state_can_apply(const ui_state *s);
+bool ui_state_selected_host(const ui_state *s);
+
+/* Current binding string for a control index (device record or host wheel). */
+void ui_state_binding_string_at(const ui_state *s, int index, char *buf,
+				size_t len);
+
+/* Write the daemon config from the current records and signal the daemon. */
+void ui_state_export_config(ui_state *s);
 
 /* Draw the whole UI. Implemented in ui_layout.c (needs ImGui). */
 void ui_draw(ui_state *s);
