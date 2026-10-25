@@ -60,7 +60,7 @@ REMAP_OBJS := $(BUILD)/remap_main.o $(BUILD)/remap_map.o \
               $(BUILD)/remap_plan.o $(BUILD)/remap_run.o \
               $(BUILD)/remap_arena.o $(BUILD)/remap_config.o
 
-TOOLS := naga-probe evtap
+TOOLS := naga-probe evtap bench-remap
 
 all: naga-mapper naga-remap naga-ui
 
@@ -162,6 +162,9 @@ naga-probe: tools/naga-probe.c
 
 evtap: tools/evtap.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $<
+
+bench-remap: tools/bench-remap.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LIBEVDEV_CFLAGS) -o $@ $< $(LIBEVDEV_LIBS)
 
 # ---- install --------------------------------------------------------------
 

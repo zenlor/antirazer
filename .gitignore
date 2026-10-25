@@ -5,7 +5,9 @@
 /naga-remap
 /naga-probe
 /evtap
+/bench-remap
 *.o
+*.d
 
 # python bytecode
 __pycache__/
