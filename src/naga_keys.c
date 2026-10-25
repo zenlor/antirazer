@@ -199,6 +199,40 @@ int naga_parse_mod(const char *s)
 	return mod;
 }
 
+static const struct mouse_name {
+	const char *name;
+	uint8_t id;
+} mouse_names[] = {
+    {"left", NAGA_MOUSE_LEFT},	     {"right", NAGA_MOUSE_RIGHT},
+    {"middle", NAGA_MOUSE_MIDDLE},   {"back", NAGA_MOUSE_BACK},
+    {"forward", NAGA_MOUSE_FORWARD},
+};
+
+const char *naga_mouse_name(int button)
+{
+	for (size_t i = 0; i < ARRAY_LEN(mouse_names); i++)
+		if (mouse_names[i].id == button)
+			return mouse_names[i].name;
+	return NULL;
+}
+
+int naga_parse_mouse(const char *s)
+{
+	int used = 0, v;
+
+	if (!s || !*s)
+		return -1;
+	if (!strncasecmp(s, "mouse:", 6))
+		s += 6;
+	for (size_t i = 0; i < ARRAY_LEN(mouse_names); i++)
+		if (!strcasecmp(s, mouse_names[i].name))
+			return mouse_names[i].id;
+	if (sscanf(s, "%d%n", &v, &used) == 1 && used == (int)strlen(s) && v >= 1 &&
+	    v <= 0xFF)
+		return v;
+	return -1;
+}
+
 static size_t put_mods(char *buf, size_t len, unsigned mod)
 {
 	static const char *const names[] = {
@@ -238,6 +272,27 @@ const char *naga_binding_name(const naga_rec *rec, char *buf, size_t len)
 			snprintf(buf + off, len - off, "%s", key);
 		else
 			snprintf(buf + off, len - off, "0x%02x", rec->usage);
+		break;
+	case NAGA_ASSIGN_MOUSE: {
+		const char *name = naga_mouse_name(rec->mouse);
+
+		if (name)
+			snprintf(buf, len, "mouse %s", name);
+		else
+			snprintf(buf, len, "mouse %02x", rec->mouse);
+		break;
+	}
+	case NAGA_ASSIGN_HYPERSHIFT:
+		snprintf(buf, len, "hypershift");
+		break;
+	case NAGA_ASSIGN_DPI:
+		snprintf(buf, len, "dpi function %u", rec->param);
+		break;
+	case NAGA_ASSIGN_PROFILE:
+		snprintf(buf, len, "profile function %02x", rec->param);
+		break;
+	case NAGA_ASSIGN_TILT:
+		snprintf(buf, len, "wheel tilt");
 		break;
 	case NAGA_ASSIGN_TURBO:
 		off = put_mods(buf, len, rec->mod);

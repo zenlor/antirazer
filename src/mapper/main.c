@@ -21,24 +21,27 @@
 
 static void usage(FILE *out, const char *argv0)
 {
-	fprintf(out,
-		"usage: %s <command> [args]\n"
-		"\n"
-		"  list                              read and print every control\n"
-		"  get <ctr-hex>                     read one mapping record\n"
-		"  set <ctr-hex> <key> [mods] [layer]  bind a key (layer: 00/01)\n"
-		"  turbo <ctr-hex> <key> <ms> [mods]   autofire while held\n"
-		"  commit                            re-apply the stored table\n"
-		"  dpi <x> <y>                       set DPI (counts per inch)\n"
-		"\n"
-		"  <ctr-hex>  01..03 main buttons, 04/05 wheel, 0B/0C DPI,\n"
-		"             40..4B thumb buttons 1..9, 0, -, =\n"
-		"  <key>      a..z 0..9 f1..f24 enter esc space tab pgup kp1 ...\n"
-		"             or a raw HID usage in hex (1a, 0x1a)\n"
-		"  <mods>     ctrl, shift, alt, super joined with '+' (default none)\n"
-		"\n"
-		"example: %s set 40 ctrl+shift+t\n",
-		argv0, argv0);
+	fprintf(
+	    out,
+	    "usage: %s <command> [args]\n"
+	    "\n"
+	    "  list                              read and print every control\n"
+	    "  get <ctr-hex>                     read one mapping record\n"
+	    "  set <ctr-hex> <key> [mods] [layer]   bind a key (layer: 00/01)\n"
+	    "  set <ctr-hex> mouse:<button> [layer]  left/right/middle/back/forward\n"
+	    "  set <ctr-hex> hypershift [layer]      make it the layer switch\n"
+	    "  turbo <ctr-hex> <key> <ms> [mods]     autofire while held\n"
+	    "  commit                            re-apply the stored table\n"
+	    "  dpi <x> <y>                       set DPI (counts per inch)\n"
+	    "\n"
+	    "  <ctr-hex>  01..03 main buttons, 04/05 wheel, 0B/0C DPI,\n"
+	    "             40..4B thumb buttons 1..9, 0, -, =\n"
+	    "  <key>      a..z 0..9 f1..f24 enter esc space tab pgup kp1 ...\n"
+	    "             or a raw HID usage in hex (1a, 0x1a)\n"
+	    "  <mods>     ctrl, shift, alt, super joined with '+' (default none)\n"
+	    "\n"
+	    "example: %s set 40 ctrl+shift+t\n",
+	    argv0, argv0);
 }
 
 static int parse_ctr(const char *s, unsigned *out)
@@ -116,37 +119,78 @@ int main(int argc, char **argv)
 		rc = 0;
 	} else if (!strcmp(cmd, "set") && argc > 3) {
 		unsigned ctr;
-		int usage = naga_parse_usage(argv[3]);
-		int mod = argc > 4 ? naga_parse_mod(argv[4]) : 0;
-		long layer = argc > 5 ? strtol(argv[5], NULL, 16) : 0;
-		int err;
+		long layer;
+		int err = 0;
 
 		if (parse_ctr(argv[2], &ctr)) {
 			fprintf(stderr, "bad ctr: %s\n", argv[2]);
 			goto out;
 		}
-		if (usage < 0) {
-			fprintf(stderr, "bad key: %s (try a name or a hex usage)\n",
-				argv[3]);
-			goto out;
+
+		if (!strcmp(argv[3], "hypershift")) {
+			layer = argc > 4 ? strtol(argv[4], NULL, 16) : 0;
+			if (layer != NAGA_LAYER_NORMAL &&
+			    layer != NAGA_LAYER_HYPERSHIFT) {
+				fprintf(stderr, "bad layer: %s (00 or 01)\n", argv[4]);
+				goto out;
+			}
+			err = naga_set_hypershift(ctr, (unsigned)layer);
+			if (!err)
+				printf("ctr %02X -> hypershift (%s), committed\n", ctr,
+				       layer ? "hypershift" : "normal");
+		} else if (!strncmp(argv[3], "mouse:", 6)) {
+			int button = naga_parse_mouse(argv[3]);
+
+			layer = argc > 4 ? strtol(argv[4], NULL, 16) : 0;
+			if (button < 0) {
+				fprintf(stderr,
+					"bad mouse button: %s (left, right, "
+					"middle, back, forward)\n",
+					argv[3]);
+				goto out;
+			}
+			if (layer != NAGA_LAYER_NORMAL &&
+			    layer != NAGA_LAYER_HYPERSHIFT) {
+				fprintf(stderr, "bad layer: %s (00 or 01)\n", argv[4]);
+				goto out;
+			}
+			err = naga_set_mouse(ctr, (unsigned)button, (unsigned)layer);
+			if (!err)
+				printf("ctr %02X -> mouse %s (%s), committed\n", ctr,
+				       naga_mouse_name(button),
+				       layer ? "hypershift" : "normal");
+		} else {
+			int usage = naga_parse_usage(argv[3]);
+			int mod = argc > 4 ? naga_parse_mod(argv[4]) : 0;
+
+			layer = argc > 5 ? strtol(argv[5], NULL, 16) : 0;
+			if (usage < 0) {
+				fprintf(stderr,
+					"bad key: %s (try a name or a hex usage)\n",
+					argv[3]);
+				goto out;
+			}
+			if (mod < 0) {
+				fprintf(stderr, "bad modifiers: %s\n", argv[4]);
+				goto out;
+			}
+			if (layer != NAGA_LAYER_NORMAL &&
+			    layer != NAGA_LAYER_HYPERSHIFT) {
+				fprintf(stderr, "bad layer: %s (00 or 01)\n", argv[5]);
+				goto out;
+			}
+			err = naga_set_key(ctr, (unsigned)usage, (unsigned)mod,
+					   (unsigned)layer);
+			if (!err)
+				printf("ctr %02X -> %s%s%s (%s), committed\n", ctr,
+				       mod & 0x01 ? "ctrl+" : "",
+				       mod & 0x02 ? "shift+" : "", argv[3],
+				       layer ? "hypershift" : "normal");
 		}
-		if (mod < 0) {
-			fprintf(stderr, "bad modifiers: %s\n", argv[4]);
-			goto out;
-		}
-		if (layer != NAGA_LAYER_NORMAL && layer != NAGA_LAYER_HYPERSHIFT) {
-			fprintf(stderr, "bad layer: %s (00 or 01)\n", argv[5]);
-			goto out;
-		}
-		err =
-		    naga_set_key(ctr, (unsigned)usage, (unsigned)mod, (unsigned)layer);
 		if (err) {
 			fprintf(stderr, "write failed: %s\n", naga_strerror(err));
 			goto out;
 		}
-		printf("ctr %02X -> %s%s%s (%s), committed\n", ctr,
-		       mod & 0x01 ? "ctrl+" : "", mod & 0x02 ? "shift+" : "", argv[3],
-		       layer ? "hypershift" : "normal");
 		rc = 0;
 	} else if (!strcmp(cmd, "turbo") && argc > 4) {
 		unsigned ctr;

@@ -171,32 +171,40 @@ int naga_get_rec(unsigned ctr, naga_rec *out)
 	out->valid = true;
 	out->ctr = resp[9];
 	out->layer = resp[10];
-	out->type = resp[12];
+	/* Record: 01 <ctr> <layer> <type> <length> <data...> */
+	out->type = resp[11];
+	out->mouse = resp[13];
+	out->param = resp[13];
 	out->mod = resp[13];
 	out->usage = resp[14];
 	out->rate = (uint16_t)resp[15] << 8 | resp[16];
 	return NAGA_OK;
 }
 
-int naga_set_key(unsigned ctr, unsigned usage, unsigned mod, unsigned layer)
+/*
+ * Write one mapping record and commit it:
+ *
+ *   01 <ctr> <layer> <type> <length> <data...>
+ */
+static int write_record(unsigned ctr, unsigned layer, unsigned type,
+			const unsigned char *data, unsigned len)
 {
 	unsigned char req[NAGA_REPORT_LEN] = {0};
 	unsigned char resp[NAGA_REPORT_LEN];
 	int rc;
 
-	if (usage > 0xFF || mod > 0xFF || layer > 0xFF)
+	if (ctr > 0xFF || layer > 0xFF || type > 0xFF || len > 7)
 		return NAGA_ERR_INVALID;
 
-	req[5] = 0x0A;
+	req[5] = 0x0A; /* data size */
 	req[6] = 0x02; /* class: button mapping */
 	req[7] = 0x0C; /* write record */
-	req[8] = 0x01;
+	req[8] = 0x01; /* live profile */
 	req[9] = (unsigned char)ctr;
 	req[10] = (unsigned char)layer;
-	req[11] = 0x02; /* input class: side buttons */
-	req[12] = 0x02; /* assignment: keyboard key */
-	req[13] = (unsigned char)mod;
-	req[14] = (unsigned char)usage;
+	req[11] = (unsigned char)type;
+	req[12] = (unsigned char)len;
+	memcpy(&req[13], data, len);
 
 	rc = transact(req, resp);
 	if (rc)
@@ -204,12 +212,38 @@ int naga_set_key(unsigned ctr, unsigned usage, unsigned mod, unsigned layer)
 	return naga_commit();
 }
 
+int naga_set_key(unsigned ctr, unsigned usage, unsigned mod, unsigned layer)
+{
+	const unsigned char data[2] = {
+	    (unsigned char)mod,
+	    (unsigned char)usage,
+	};
+
+	if (usage > 0xFF || mod > 0xFF)
+		return NAGA_ERR_INVALID;
+	return write_record(ctr, layer, NAGA_ASSIGN_KEY, data, sizeof data);
+}
+
+int naga_set_mouse(unsigned ctr, unsigned button, unsigned layer)
+{
+	const unsigned char data[1] = {(unsigned char)button};
+
+	if (button == 0 || button > 0xFF)
+		return NAGA_ERR_INVALID;
+	return write_record(ctr, layer, NAGA_ASSIGN_MOUSE, data, sizeof data);
+}
+
+int naga_set_hypershift(unsigned ctr, unsigned layer)
+{
+	const unsigned char data[1] = {0x01};
+
+	return write_record(ctr, layer, NAGA_ASSIGN_HYPERSHIFT, data, sizeof data);
+}
+
 int naga_set_turbo(unsigned ctr, unsigned usage, unsigned mod, unsigned delay_ms)
 {
-	unsigned char req[NAGA_REPORT_LEN] = {0};
-	unsigned char resp[NAGA_REPORT_LEN];
+	unsigned char data[4];
 	unsigned rate;
-	int rc;
 
 	if (usage > 0xFF || mod > 0xFF || delay_ms == 0)
 		return NAGA_ERR_INVALID;
@@ -218,23 +252,13 @@ int naga_set_turbo(unsigned ctr, unsigned usage, unsigned mod, unsigned delay_ms
 	if (rate > 0xFFFF)
 		rate = 0xFFFF;
 
-	req[5] = 0x0A;
-	req[6] = 0x02; /* class: button mapping */
-	req[7] = 0x0C; /* write record */
-	req[8] = 0x01;
-	req[9] = (unsigned char)ctr;
-	req[10] = 0x00; /* normal layer */
-	req[11] = 0x0D;
-	req[12] = 0x04;
-	req[13] = (unsigned char)mod;
-	req[14] = (unsigned char)usage;
-	req[15] = (unsigned char)(rate >> 8);
-	req[16] = (unsigned char)rate;
+	data[0] = (unsigned char)mod;
+	data[1] = (unsigned char)usage;
+	data[2] = (unsigned char)(rate >> 8);
+	data[3] = (unsigned char)rate;
 
-	rc = transact(req, resp);
-	if (rc)
-		return rc;
-	return naga_commit();
+	return write_record(ctr, NAGA_LAYER_NORMAL, NAGA_ASSIGN_TURBO, data,
+			    sizeof data);
 }
 
 int naga_set_dpi(unsigned x, unsigned y)

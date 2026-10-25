@@ -113,8 +113,47 @@ static void test_binding_name(void)
 	rec.rate = 333;	  /* ~3000 ms */
 	CHECK(!strcmp(naga_binding_name(&rec, buf, sizeof buf), "turbo f3 @3003ms"));
 
+	rec.type = NAGA_ASSIGN_MOUSE;
+	rec.mouse = NAGA_MOUSE_MIDDLE;
+	CHECK(!strcmp(naga_binding_name(&rec, buf, sizeof buf), "mouse middle"));
+
+	rec.mouse = 9;
+	CHECK(!strcmp(naga_binding_name(&rec, buf, sizeof buf), "mouse 09"));
+
+	rec.type = NAGA_ASSIGN_HYPERSHIFT;
+	CHECK(!strcmp(naga_binding_name(&rec, buf, sizeof buf), "hypershift"));
+
+	rec.type = NAGA_ASSIGN_DPI;
+	rec.param = 1;
+	CHECK(!strcmp(naga_binding_name(&rec, buf, sizeof buf), "dpi function 1"));
+
+	rec.type = NAGA_ASSIGN_PROFILE;
+	rec.param = 4;
+	CHECK(!strcmp(naga_binding_name(&rec, buf, sizeof buf), "profile function 04"));
+
+	rec.type = NAGA_ASSIGN_TILT;
+	CHECK(!strcmp(naga_binding_name(&rec, buf, sizeof buf), "wheel tilt"));
+
 	rec.type = 0x42;
 	CHECK(!strcmp(naga_binding_name(&rec, buf, sizeof buf), "type 42"));
+}
+
+static void test_mouse(void)
+{
+	CHECK(naga_parse_mouse("left") == NAGA_MOUSE_LEFT);
+	CHECK(naga_parse_mouse("RIGHT") == NAGA_MOUSE_RIGHT);
+	CHECK(naga_parse_mouse("middle") == NAGA_MOUSE_MIDDLE);
+	CHECK(naga_parse_mouse("mouse:back") == NAGA_MOUSE_BACK);
+	CHECK(naga_parse_mouse("forward") == NAGA_MOUSE_FORWARD);
+	CHECK(naga_parse_mouse("4") == NAGA_MOUSE_BACK);
+	CHECK(naga_parse_mouse("9") == 9);
+	CHECK(naga_parse_mouse("bogus") == -1);
+	CHECK(naga_parse_mouse("") == -1);
+	CHECK(naga_parse_mouse(NULL) == -1);
+
+	CHECK(!strcmp(naga_mouse_name(NAGA_MOUSE_LEFT), "left"));
+	CHECK(!strcmp(naga_mouse_name(NAGA_MOUSE_FORWARD), "forward"));
+	CHECK(naga_mouse_name(9) == NULL);
 }
 
 static void test_ctrls(void)
@@ -144,6 +183,7 @@ int main(void)
 	test_keyname_roundtrip();
 	test_mods();
 	test_binding_name();
+	test_mouse();
 	test_ctrls();
 
 	if (failures) {

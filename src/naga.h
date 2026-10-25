@@ -38,9 +38,23 @@ enum naga_layer {
 
 /* Assignment types the firmware stores in a mapping record. */
 enum naga_assign {
-	NAGA_ASSIGN_DEFAULT = 0x00, /* device default */
-	NAGA_ASSIGN_KEY = 0x02,	    /* keyboard key */
-	NAGA_ASSIGN_TURBO = 0x0D,   /* autofire */
+	NAGA_ASSIGN_DEFAULT = 0x00,    /* device default */
+	NAGA_ASSIGN_MOUSE = 0x01,      /* mouse button */
+	NAGA_ASSIGN_KEY = 0x02,	       /* keyboard key */
+	NAGA_ASSIGN_DPI = 0x06,	       /* DPI up/down */
+	NAGA_ASSIGN_PROFILE = 0x07,    /* profile key */
+	NAGA_ASSIGN_HYPERSHIFT = 0x0B, /* layer switch (inferred) */
+	NAGA_ASSIGN_TURBO = 0x0D,      /* autofire */
+	NAGA_ASSIGN_TILT = 0x0E,       /* wheel tilt */
+};
+
+/* Mouse button ids used by NAGA_ASSIGN_MOUSE. */
+enum naga_mouse {
+	NAGA_MOUSE_LEFT = 1,
+	NAGA_MOUSE_RIGHT = 2,
+	NAGA_MOUSE_MIDDLE = 3,
+	NAGA_MOUSE_BACK = 4,
+	NAGA_MOUSE_FORWARD = 5,
 };
 
 typedef struct {
@@ -48,6 +62,8 @@ typedef struct {
 	uint8_t ctr;   /* control instance */
 	uint8_t layer; /* 0x00 normal, 0x01 hypershift */
 	uint8_t type;  /* enum naga_assign */
+	uint8_t mouse; /* NAGA_ASSIGN_MOUSE: button id */
+	uint8_t param; /* other non-key types: first data byte */
 	uint8_t mod;   /* HID modifier bitmap */
 	uint8_t usage; /* HID keyboard usage */
 	uint16_t rate; /* turbo: repeats per second (1000000 / delay_ms) */
@@ -92,6 +108,12 @@ int naga_set_key(unsigned ctr, unsigned usage, unsigned mod, unsigned layer);
 /* Write + commit a turbo (autofire) assignment. delay_ms is the repeat delay. */
 int naga_set_turbo(unsigned ctr, unsigned usage, unsigned mod, unsigned delay_ms);
 
+/* Write + commit a mouse-button action (button ids from enum naga_mouse). */
+int naga_set_mouse(unsigned ctr, unsigned button, unsigned layer);
+
+/* Write + commit the Hypershift layer-switch action for <ctr>. */
+int naga_set_hypershift(unsigned ctr, unsigned layer);
+
 /* Write + commit a DPI value in counts per inch. */
 int naga_set_dpi(unsigned x, unsigned y);
 
@@ -109,7 +131,13 @@ int naga_parse_usage(const char *s);
 /* "ctrl+shift" / "3" (HID bitmap) -> modifier byte, or -1. */
 int naga_parse_mod(const char *s);
 
-/* Render a record as "ctrl+shift+t" / "turbo f5 @3000ms" / "default". */
+/* 1..5 -> "left" / "right" / "middle" / "back" / "forward", else NULL. */
+const char *naga_mouse_name(int button);
+
+/* "left" / "middle" / "1".."5" (or "mouse:...") -> button id, or -1. */
+int naga_parse_mouse(const char *s);
+
+/* Render a record as "ctrl+shift+t" / "mouse middle" / "hypershift" / "default". */
 const char *naga_binding_name(const naga_rec *rec, char *buf, size_t len);
 
 #endif /* ANTIRAZER_NAGA_H */
