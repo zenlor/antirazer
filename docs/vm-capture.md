@@ -74,7 +74,57 @@ The scripts expect the device address used by `tshark` (`bus.device`, e.g.
 Capture the host side, not the guest: with usbredir the traffic passes through
 QEMU on the host, so usbmon sees it.
 
-## 4. Guest automation (optional)
+## 4. Capturing mouse buttons and Hypershift
+
+Synapse rewrites the whole mapping table when it connects, so the device's
+current bindings are replaced by whatever Synapse last saved. Note the current
+layout first (with the mouse on the host: `naga-mapper list >
+~/naga-before.txt`) and expect to restore it afterwards.
+
+Two ordinary usbmon captures are enough; `records.py` decodes the mapping
+writes and diffs them:
+
+1. **Baseline.** With Synapse closed (or the mouse still on the host), start
+   capture A. Launch Synapse and/or share the mouse into the guest, then let
+   it connect and push its table; leave about ten seconds of quiet.
+2. **Mouse buttons.** Assign a different thumb button to each mouse-button
+   action, so one table shows all of them: `1` → middle click, `2` → left
+   click, `3` → back, `4` → forward. Save after each change and pause 2-3
+   seconds between changes so the phases stay separable.
+3. **Layer switch.** Assign another thumb button (`5`) to the Hypershift
+   action. Save and pause.
+4. **Hypershift layer.** Switch Synapse's layer selector to the Hypershift
+   layer and bind one thumb button (`6`) to a keyboard key such as F13. Save
+   and pause.
+5. **Full table.** Start capture B, then unshare and reshare the mouse (or
+   restart Synapse): Synapse pushes the complete table on reconnect, which
+   makes the diff independent of how writes were batched. Stop both captures.
+6. **Analyse**:
+
+   ```sh
+   python3 tools/captures/records.py --diff /tmp/baseline.pcapng /tmp/after.pcapng
+   ```
+
+   Each changed binding is printed with its action decoded. Anything the
+   decoder does not know yet is shown as `type XX data ...` — that is what the
+   new mouse-button and Hypershift actions look like until they are added to
+   the decoder.
+
+The capture should answer:
+
+* the action type and parameter bytes for "mouse button" (left/right/middle/
+  back/forward; the Naga V2 Pro patch suggests `01 01 <1..5>`),
+* the action type and parameters for the Hypershift switch (the static
+  analysis called it `MAP_HYPERSHIFTKEY`),
+* whether a Hypershift binding's layer byte reads `01` on both layers,
+* whether a Hypershift-layer binding uses layer byte `01` and the same action
+  layout as a normal one,
+* whether Synapse sends the `00/B3` commit after the writes.
+
+Restore your own layout when done — with `naga-mapper set <ctr> <key>` for
+keyboard bindings now, and with the mouse actions once they are implemented.
+
+## 5. Guest automation (optional)
 
 Driving the Windows GUI is the tedious part. The VM harness includes helpers
 for it:
@@ -101,7 +151,7 @@ Things learned the hard way:
   server in front of the guest will happily serve a cached copy of the
   previous script otherwise.
 
-## 5. Safety
+## 6. Safety
 
 * Do not write anything to the device that a capture has not shown. An
   accepted-but-wrong write can persist in flash (see the incident in the
