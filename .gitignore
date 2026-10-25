@@ -1,0 +1,12 @@
+# build output
+/build/
+/naga-mapper
+/naga-ui
+*.o
+
+# nix
+/result
+/result-*
+
+# runtime artifacts
+/imgui.ini

@@ -1,0 +1,9 @@
+# Razer Naga Left-Handed Edition 2020 — userland access for antirazer
+#
+# install: sudo install -m644 udev/99-naga.rules /etc/udev/rules.d/
+#          sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# TAG+="uaccess" grants the user of the active session access via logind.
+# Without systemd, use MODE="0660", GROUP="users" (or your desktop group)
+# instead.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1532", ATTRS{idProduct}=="008d", TAG+="uaccess"
