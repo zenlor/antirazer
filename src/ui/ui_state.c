@@ -198,7 +198,12 @@ void ui_state_apply(ui_state *s)
 	    naga_get_rec(ctrl->ctr, &s->recs[s->selected]) == NAGA_OK;
 	ui_state_set_status(s, false, "%s: %s%s committed", ctrl->name,
 			    s->turbo ? "turbo " : "", s->key);
-	ui_state_select(s, s->selected); /* show what the device stored */
+	/*
+	 * Keep the editor fields as entered. The read-back layout of
+	 * non-keyboard assignments is not fully understood, so re-deriving the
+	 * form from it could contradict a write the device just accepted; the
+	 * "current:" line shows what was read back instead.
+	 */
 }
 
 void ui_state_apply_dpi(ui_state *s)
