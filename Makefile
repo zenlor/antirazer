@@ -69,11 +69,14 @@ $(BUILD)/ui_state.o: src/ui/ui_state.c | $(BUILD)
 $(BUILD)/ui_layout.o: src/ui/ui_layout.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(UI_CPPFLAGS) -c $< -o $@
 
+$(BUILD)/ui_keys.o: src/ui/ui_keys.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(UI_CPPFLAGS) -c $< -o $@
+
 $(BUILD)/cbridge.o: src/ui/cbridge.cpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(UI_CPPFLAGS) -c $< -o $@
 
 naga-ui: $(CORE_OBJS) $(BUILD)/ui_main.o $(BUILD)/ui_state.o \
-         $(BUILD)/ui_layout.o $(BUILD)/cbridge.o
+         $(BUILD)/ui_layout.o $(BUILD)/ui_keys.o $(BUILD)/cbridge.o
 	$(CXX) $(LDFLAGS) -o $@ $^ $(UI_LIBS)
 
 else

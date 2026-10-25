@@ -31,6 +31,8 @@ typedef struct {
 
 	/* editor fields for the selected control */
 	char key[UI_KEY_MAX];
+	char key_filter[32]; /* filter text of the key chooser popup */
+	bool recording_key;  /* record button armed, waiting for a key */
 	bool mod_ctrl;
 	bool mod_shift;
 	bool mod_alt;
@@ -64,6 +66,16 @@ void ui_state_apply(ui_state *s);
 
 /* Re-read the selected record and reload the editor fields. */
 void ui_state_refresh_selected(ui_state *s);
+
+/*
+ * Set the editor fields from a captured binding: the canonical key name and
+ * the modifier checkboxes. Used by the key chooser and the record button.
+ */
+void ui_state_set_key(ui_state *s, unsigned usage, unsigned mod);
+
+/* Arm the record button; the next key press is captured by main.c. */
+void ui_state_begin_key_record(ui_state *s);
+void ui_state_cancel_key_record(ui_state *s);
 
 /* Apply the DPI sliders. */
 void ui_state_apply_dpi(ui_state *s);

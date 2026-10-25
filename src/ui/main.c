@@ -18,10 +18,17 @@
 #include "cimgui.h"
 
 #include "ui.h"
+#include "ui_keys.h"
 
 static ImVec2 V(float x, float y)
 {
 	ImVec2 v = {x, y};
+	return v;
+}
+
+static ImVec4 V4(float r, float g, float b, float a)
+{
+	ImVec4 v = {r, g, b, a};
 	return v;
 }
 
@@ -137,10 +144,13 @@ int main(int argc, char **argv)
 	style->GrabRounding = 4.0f;
 	style->WindowPadding = V(12.0f, 10.0f);
 	style->ItemSpacing = V(8.0f, 7.0f);
+	/* Popup lists are long; the default translucent background is hard to read. */
+	style->Colors[ImGuiCol_PopupBg] = V4(0.105f, 0.113f, 0.13f, 1.0f);
 
 	naga_impl_sdl3_init_for_sdlrenderer(window, renderer);
 	naga_impl_sdlrenderer3_init(renderer);
 
+	ui_keys_rebuild();
 	ui_state_init(&state);
 	ui_state_connect(&state);
 
@@ -148,6 +158,33 @@ int main(int argc, char **argv)
 		SDL_Event event;
 
 		while (SDL_PollEvent(&event)) {
+			if (event.type == SDL_EVENT_KEYMAP_CHANGED) {
+				ui_keys_rebuild();
+			} else if (state.recording_key) {
+				unsigned usage = 0;
+				unsigned mod = 0;
+				enum ui_key_capture captured =
+				    ui_keys_capture(&event, &usage, &mod);
+
+				if (captured == UI_KEY_CAPTURE_KEY) {
+					ui_state_set_key(&state, usage, mod);
+					ui_state_set_status(&state, false,
+							    "recorded %s", state.key);
+					continue; /* do not type it into the UI too */
+				}
+				if (captured == UI_KEY_CAPTURE_CANCEL) {
+					ui_state_cancel_key_record(&state);
+					continue;
+				}
+				if (captured == UI_KEY_CAPTURE_UNSUPPORTED_MOUSE) {
+					ui_state_set_status(
+					    &state, false,
+					    "mouse buttons cannot be recorded yet "
+					    "(no verified encoding)");
+					/* fall through so the click still works */
+				}
+			}
+
 			naga_impl_sdl3_processevent(&event);
 			if (event.type == SDL_EVENT_QUIT)
 				running = false;

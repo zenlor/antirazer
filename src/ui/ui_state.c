@@ -115,6 +115,7 @@ void ui_state_select(ui_state *s, int index)
 	}
 
 	s->selected = index;
+	s->recording_key = false;
 	rec = &s->recs[index];
 	mod = rec->mod & 0x0F;
 
@@ -155,6 +156,36 @@ void ui_state_refresh_selected(ui_state *s)
 	}
 	ui_state_select(s, s->selected);
 	ui_state_set_status(s, false, "%s: record re-read", ctrl->name);
+}
+
+void ui_state_set_key(ui_state *s, unsigned usage, unsigned mod)
+{
+	const char *name = naga_keyname((int)usage);
+
+	if (name)
+		snprintf(s->key, sizeof s->key, "%s", name);
+	else
+		snprintf(s->key, sizeof s->key, "%02x", usage);
+
+	s->mod_ctrl = (mod & 0x01) != 0;
+	s->mod_shift = (mod & 0x02) != 0;
+	s->mod_alt = (mod & 0x04) != 0;
+	s->mod_super = (mod & 0x08) != 0;
+	s->recording_key = false;
+}
+
+void ui_state_begin_key_record(ui_state *s)
+{
+	s->recording_key = true;
+	ui_state_set_status(s, false, "listening - press a key, Esc cancels");
+}
+
+void ui_state_cancel_key_record(ui_state *s)
+{
+	if (!s->recording_key)
+		return;
+	s->recording_key = false;
+	ui_state_set_status(s, false, "recording cancelled");
 }
 
 void ui_state_apply(ui_state *s)

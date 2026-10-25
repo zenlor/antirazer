@@ -97,6 +97,16 @@ tooltip). The right column edits the selected control: key, modifiers, layer,
 turbo with delay, then **Write + commit**. DPI sits below the drawing. The
 status line reports each device operation.
 
+The key field has three ways in:
+
+* a searchable chooser labelled with the current **keyboard layout** (the
+  labels follow the system keymap, but the value stored is always the HID
+  usage, so a binding keeps working on a different layout),
+* a **Record** button that captures the next key press together with its
+  modifiers (`Esc` cancels). Mouse buttons cannot be recorded yet — the
+  protocol has no verified encoding for device-side mouse assignments,
+* the raw usage field for anything not in the list (`f5`, `enter`, `1a`).
+
 `naga-ui --screenshot shot.bmp` renders the window, saves a screenshot and
 exits — handy for smoke tests on headless machines.
 
@@ -202,7 +212,8 @@ src/naga.c        USB transport, request encoding, mapping/DPI writes
 src/naga_keys.c   HID usage <-> name, modifier parsing, binding rendering
 src/naga_ctrls.c  the control table (names, ctr values, groups)
 src/mapper/       naga-mapper CLI
-src/ui/           naga-ui: ui_state.c (logic), ui_layout.c (ImGui), main.c (SDL3)
+src/ui/           naga-ui: ui_state.c (logic), ui_layout.c (ImGui),
+                  ui_keys.c (layout-aware key names and capture), main.c (SDL3)
 tests/            unit tests for the pure key/control code
 tools/            research: naga-probe, evtap, captures/ analysis, vm/ harness
 docs/             protocol reference, research log, VM capture guide

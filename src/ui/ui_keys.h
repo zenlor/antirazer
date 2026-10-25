@@ -1,0 +1,63 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later OR BSD-2-Clause */
+/*
+ * ui_keys.h — keyboard catalog and event capture for naga-ui.
+ *
+ * The device stores HID keyboard usages, which are physical positions in the
+ * HID keyboard page. This module turns them into labels for the current
+ * keyboard layout (via SDL) and captures a pressed key from SDL events.
+ *
+ * Nothing here talks to the device; it only translates between SDL, HID
+ * usages and the canonical names used by naga_keys.c.
+ */
+#ifndef ANTIRAZER_UI_KEYS_H
+#define ANTIRAZER_UI_KEYS_H
+
+#include <stdbool.h>
+#include <stddef.h>
+
+#include <SDL3/SDL.h>
+
+enum ui_key_group {
+	UI_KEY_GROUP_LETTERS,
+	UI_KEY_GROUP_DIGITS,
+	UI_KEY_GROUP_PUNCTUATION,
+	UI_KEY_GROUP_FUNCTION,
+	UI_KEY_GROUP_NAVIGATION,
+	UI_KEY_GROUP_KEYPAD,
+	UI_KEY_GROUP_MEDIA,
+	UI_KEY_GROUP_COUNT,
+};
+
+typedef struct {
+	unsigned usage;	   /* HID keyboard usage, what the device stores */
+	const char *label; /* label in the current keyboard layout */
+	const char *name;  /* canonical naga name: "z", "f5", "1a" */
+	enum ui_key_group group;
+} ui_key_entry;
+
+enum ui_key_capture {
+	UI_KEY_CAPTURE_NONE,
+	UI_KEY_CAPTURE_KEY,		  /* *usage / *mod are filled in */
+	UI_KEY_CAPTURE_CANCEL,		  /* Escape */
+	UI_KEY_CAPTURE_UNSUPPORTED_MOUSE, /* mouse button pressed */
+};
+
+/* Build the catalog from the current SDL keyboard layout. Call after SDL_Init. */
+void ui_keys_rebuild(void);
+
+const ui_key_entry *ui_keys_entries(size_t *count);
+const char *ui_key_group_name(enum ui_key_group group);
+const ui_key_entry *ui_keys_find(unsigned usage);
+
+/*
+ * Translate one SDL event into a binding.
+ *
+ * Keyboard only: the mapping protocol has no verified encoding for mouse
+ * button assignments, so mouse presses report UI_KEY_CAPTURE_UNSUPPORTED_MOUSE.
+ * Modifier keys are not captured as the binding themselves; their state is
+ * folded into *mod when a non-modifier key is pressed.
+ */
+enum ui_key_capture ui_keys_capture(const SDL_Event *event, unsigned *usage,
+				    unsigned *mod);
+
+#endif /* ANTIRAZER_UI_KEYS_H */

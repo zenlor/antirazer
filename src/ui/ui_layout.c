@@ -9,11 +9,13 @@
  */
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 #define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
 #include "cimgui.h"
 
 #include "ui.h"
+#include "ui_keys.h"
 
 /* ---- small helpers ------------------------------------------------------ */
 
@@ -271,10 +273,115 @@ static void draw_dpi(ui_state *s)
 	igEndDisabled();
 }
 
+static bool contains_ci(const char *haystack, const char *needle)
+{
+	size_t length = strlen(needle);
+
+	if (!length)
+		return true;
+	for (const char *p = haystack; *p; p++)
+		if (!strncasecmp(p, needle, length))
+			return true;
+	return false;
+}
+
+/*
+ * Prefer the layout label. When a single character and its canonical name are
+ * both one character but differ (a QWERTZ Y/Z swap, for example), show the
+ * canonical name as a hint so the stored usage is unambiguous.
+ */
+static void key_display(const ui_key_entry *entry, char *buf, size_t len)
+{
+	if (strlen(entry->label) == 1 && strlen(entry->name) == 1 &&
+	    strcasecmp(entry->label, entry->name) != 0)
+		snprintf(buf, len, "%s (%s)", entry->label, entry->name);
+	else
+		snprintf(buf, len, "%s", entry->label);
+}
+
+/*
+ * Layout-aware key chooser. The list is built from HID usages and labelled
+ * with SDL's current keymap; selecting an entry stores the canonical usage in
+ * the editor (and keeps the modifier checkboxes as they are).
+ */
+static void draw_key_combo(ui_state *s, int current, unsigned mod)
+{
+	const ui_key_entry *selected_entry =
+	    current >= 0 ? ui_keys_find((unsigned)current) : NULL;
+	char preview[96];
+
+	if (selected_entry) {
+		key_display(selected_entry, preview, sizeof preview);
+	} else if (s->key[0]) {
+		snprintf(preview, sizeof preview, "%s", s->key);
+	} else {
+		snprintf(preview, sizeof preview, "select a key");
+	}
+
+	igSetNextItemWidth(230.0f);
+	if (!igBeginCombo("##key_choice", preview, ImGuiComboFlags_HeightLarge))
+		return;
+
+	if (igIsWindowAppearing())
+		igSetKeyboardFocusHere(0);
+	igSetNextItemWidth(-1.0f);
+	igInputTextWithHint("##key_filter", "type to filter", s->key_filter,
+			    sizeof s->key_filter, 0, NULL, NULL);
+	igSeparator();
+
+	{
+		size_t count = 0;
+		const ui_key_entry *all = ui_keys_entries(&count);
+		bool any = false;
+
+		for (int group = 0; group < UI_KEY_GROUP_COUNT; group++) {
+			bool header_done = false;
+
+			for (size_t i = 0; i < count; i++) {
+				const ui_key_entry *entry = &all[i];
+				char item[96];
+				bool selected;
+
+				if (entry->group != (enum ui_key_group)group)
+					continue;
+				if (!contains_ci(entry->label, s->key_filter) &&
+				    !contains_ci(entry->name, s->key_filter))
+					continue;
+				if (!header_done) {
+					if (any)
+						igSeparator();
+					igTextDisabled("%s",
+						       ui_key_group_name(entry->group));
+					header_done = true;
+					any = true;
+				}
+
+				key_display(entry, item, sizeof item);
+
+				selected =
+				    current >= 0 && (unsigned)current == entry->usage;
+				igPushID_Int((int)entry->usage);
+				if (igSelectable_Bool(item, selected,
+						      ImGuiSelectableFlags_None,
+						      V(0.0f, 0.0f))) {
+					ui_state_set_key(s, entry->usage, mod);
+					igCloseCurrentPopup();
+				}
+				igPopID();
+			}
+		}
+		if (!any)
+			igTextDisabled("no matching key");
+	}
+
+	igEndCombo();
+}
+
 static void draw_editor(ui_state *s)
 {
 	const naga_ctrl *ctrl = ui_state_selected(s);
 	char binding[64];
+	unsigned mod;
 
 	if (!ctrl) {
 		igTextWrapped("Select a control on the mouse drawing to edit its "
@@ -297,16 +404,35 @@ static void draw_editor(ui_state *s)
 		igBeginDisabled(!s->connected);
 		igSpacing();
 
+		mod = (s->mod_ctrl ? 0x01 : 0) | (s->mod_shift ? 0x02 : 0) |
+		      (s->mod_alt ? 0x04 : 0) | (s->mod_super ? 0x08 : 0);
+
 		igText("key");
 		igSameLine(0.0f, 12.0f);
-		igSetNextItemWidth(170.0f);
+		draw_key_combo(s, naga_parse_usage(s->key), mod);
+		igSameLine(0.0f, 10.0f);
+		if (s->recording_key) {
+			if (igButton("Cancel", V(90.0f, 0.0f)))
+				ui_state_cancel_key_record(s);
+		} else {
+			if (igButton("Record", V(90.0f, 0.0f)))
+				ui_state_begin_key_record(s);
+		}
+
+		if (s->recording_key)
+			igTextColored(V4(0.95f, 0.75f, 0.35f, 1.0f),
+				      "listening - press a key; Esc cancels");
+
+		igText("usage");
+		igSameLine(0.0f, 12.0f);
+		igSetNextItemWidth(150.0f);
 		if (igInputTextWithHint(
 			"##key", "x / f5 / enter / 1a", s->key, sizeof s->key,
 			ImGuiInputTextFlags_EnterReturnsTrue, NULL, NULL) &&
 		    ui_state_can_apply(s))
 			ui_state_apply(s);
 		igSameLine(0.0f, 12.0f);
-		igTextDisabled("HID usage");
+		igTextDisabled("type a name or a hex HID usage");
 
 		igCheckbox("ctrl", &s->mod_ctrl);
 		igSameLine(0.0f, 14.0f);
