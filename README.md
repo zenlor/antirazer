@@ -79,7 +79,8 @@ naga-mapper dpi 1600 1600            # set DPI (counts per inch)
 
 * Thumb buttons: `40`..`4B` = `1`..`9`, `0`, `-`, `=` as labelled on the device
 * Main buttons: `01`..`03` = left / right / middle
-* Wheel: `04` / `05`; DPI keys: `0B` / `0C`
+* Wheel click: `03`; DPI keys: `0B` / `0C`. Scroll up/down is a HID wheel
+  axis, not an assignable control
 * Keys: `a`..`z`, `0`..`9`, `f1`..`f24`, `enter`, `esc`, `space`, `tab`, `pgup`,
   `kp1`, `playpause`, ... or a raw HID usage in hex (`1a`, `0x1a`)
 * Mouse: `mouse:left`, `mouse:right`, `mouse:middle`, `mouse:back`,

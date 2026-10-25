@@ -162,9 +162,7 @@ static void draw_top_view(ui_state *s, ImDrawList *dl, canvas *c)
 	} regions[] = {
 	    {"left", 82.0f, 10.0f, 38.0f, 58.0f, "L"},
 	    {"right", 154.0f, 10.0f, 38.0f, 58.0f, "R"},
-	    {"wheel-up", 122.0f, 10.0f, 30.0f, 16.0f, "^"},
 	    {"middle", 124.0f, 28.0f, 26.0f, 24.0f, "M"},
-	    {"wheel-down", 122.0f, 54.0f, 30.0f, 14.0f, "v"},
 	    {"dpi-up", 122.0f, 74.0f, 30.0f, 16.0f, "DPI+"},
 	    {"dpi-down", 122.0f, 94.0f, 30.0f, 16.0f, "DPI-"},
 	};

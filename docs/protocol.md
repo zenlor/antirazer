@@ -161,8 +161,11 @@ firmware exposes:
 | `4B` | thumb button `=` | type `02`, equal |
 
 The thumb grid is three columns by four rows; the printed labels run
-`1 2 3 / 4 5 6 / 7 8 9 / 0 - =`. antirazer also lists wheel up/down (`04`/`05`),
-but they are not part of the firmware's assignable table.
+`1 2 3 / 4 5 6 / 7 8 9 / 0 - =`. Wheel rotation is not a control at all: the
+mouse reports it as a relative HID Wheel axis (Generic Desktop usage `0x38`)
+on the mouse interface, and neither the firmware table nor Synapse's push has
+records for it. Remapping scroll has to happen in userspace (evdev/uinput).
+The wheel click is `03`; the tilts are `34`/`35`.
 
 Writing a record to the main buttons is verified by the default table itself
 (the device ships with type-`01` records); writing a *new* action to them has

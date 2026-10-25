@@ -158,7 +158,10 @@ static void test_mouse(void)
 
 static void test_ctrls(void)
 {
-	CHECK(naga_ctrls_count == 19);
+	CHECK(naga_ctrls_count == 17);
+
+	CHECK(naga_ctrl_by_ctr(0x04) == NULL);
+	CHECK(naga_ctrl_by_ctr(0x05) == NULL);
 
 	CHECK(naga_ctrl_by_ctr(0x01) == &naga_ctrls[0]);
 	CHECK(naga_ctrl_by_name("left") == &naga_ctrls[0]);

@@ -16,9 +16,7 @@ const naga_ctrl naga_ctrls[] = {
     {"right", 0x02, NAGA_GROUP_MAIN},
     {"middle", 0x03, NAGA_GROUP_MAIN},
 
-    /* wheel */
-    {"wheel-up", 0x04, NAGA_GROUP_WHEEL},
-    {"wheel-down", 0x05, NAGA_GROUP_WHEEL},
+    /* the wheel click is a main button; scroll up/down is a HID axis */
 
     /* DPI keys */
     {"dpi-up", 0x0B, NAGA_GROUP_DPI},
