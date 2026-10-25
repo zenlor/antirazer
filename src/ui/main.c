@@ -176,12 +176,12 @@ int main(int argc, char **argv)
 					ui_state_cancel_key_record(&state);
 					continue;
 				}
-				if (captured == UI_KEY_CAPTURE_UNSUPPORTED_MOUSE) {
+				if (captured == UI_KEY_CAPTURE_MOUSE) {
+					ui_state_set_mouse(&state, (int)usage);
 					ui_state_set_status(
-					    &state, false,
-					    "mouse buttons cannot be recorded yet "
-					    "(no verified encoding)");
-					/* fall through so the click still works */
+					    &state, false, "recorded mouse %s",
+					    naga_mouse_name((int)usage));
+					continue;
 				}
 			}
 

@@ -37,9 +37,9 @@ typedef struct {
 
 enum ui_key_capture {
 	UI_KEY_CAPTURE_NONE,
-	UI_KEY_CAPTURE_KEY,		  /* *usage / *mod are filled in */
-	UI_KEY_CAPTURE_CANCEL,		  /* Escape */
-	UI_KEY_CAPTURE_UNSUPPORTED_MOUSE, /* mouse button pressed */
+	UI_KEY_CAPTURE_KEY,    /* *usage / *mod are filled in */
+	UI_KEY_CAPTURE_MOUSE,  /* *usage is an enum naga_mouse id */
+	UI_KEY_CAPTURE_CANCEL, /* Escape */
 };
 
 /* Build the catalog from the current SDL keyboard layout. Call after SDL_Init. */
@@ -52,10 +52,10 @@ const ui_key_entry *ui_keys_find(unsigned usage);
 /*
  * Translate one SDL event into a binding.
  *
- * Keyboard only: the mapping protocol has no verified encoding for mouse
- * button assignments, so mouse presses report UI_KEY_CAPTURE_UNSUPPORTED_MOUSE.
- * Modifier keys are not captured as the binding themselves; their state is
- * folded into *mod when a non-modifier key is pressed.
+ * Keyboard keys and mouse buttons are both captured: a mouse press reports
+ * UI_KEY_CAPTURE_MOUSE with *usage set to the enum naga_mouse id. Modifier
+ * keys are not captured as the binding themselves; their state is folded into
+ * *mod when a non-modifier key is pressed.
  */
 enum ui_key_capture ui_keys_capture(const SDL_Event *event, unsigned *usage,
 				    unsigned *mod);

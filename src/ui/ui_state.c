@@ -30,6 +30,8 @@ void ui_state_init(ui_state *s)
 {
 	memset(s, 0, sizeof *s);
 	s->selected = first_thumbctrl();
+	s->action = UI_ACTION_KEY;
+	s->mouse_button = NAGA_MOUSE_LEFT;
 	s->turbo_ms = 500.0f;
 	s->dpi_x = 1600;
 	s->dpi_y = 1600;
@@ -119,6 +121,14 @@ void ui_state_select(ui_state *s, int index)
 	rec = &s->recs[index];
 	mod = rec->mod & 0x0F;
 
+	s->action = UI_ACTION_KEY;
+	if (rec->type == NAGA_ASSIGN_MOUSE) {
+		s->action = UI_ACTION_MOUSE;
+		s->mouse_button = rec->mouse;
+	} else if (rec->type == NAGA_ASSIGN_HYPERSHIFT) {
+		s->action = UI_ACTION_HYPERSHIFT;
+	}
+
 	s->mod_ctrl = (mod & 0x01) != 0;
 	s->mod_shift = (mod & 0x02) != 0;
 	s->mod_alt = (mod & 0x04) != 0;
@@ -162,6 +172,7 @@ void ui_state_set_key(ui_state *s, unsigned usage, unsigned mod)
 {
 	const char *name = naga_keyname((int)usage);
 
+	s->action = UI_ACTION_KEY;
 	if (name)
 		snprintf(s->key, sizeof s->key, "%s", name);
 	else
@@ -171,6 +182,19 @@ void ui_state_set_key(ui_state *s, unsigned usage, unsigned mod)
 	s->mod_shift = (mod & 0x02) != 0;
 	s->mod_alt = (mod & 0x04) != 0;
 	s->mod_super = (mod & 0x08) != 0;
+	s->recording_key = false;
+}
+
+void ui_state_set_mouse(ui_state *s, int button)
+{
+	s->action = UI_ACTION_MOUSE;
+	s->mouse_button = button;
+	s->recording_key = false;
+}
+
+void ui_state_set_hypershift(ui_state *s)
+{
+	s->action = UI_ACTION_HYPERSHIFT;
 	s->recording_key = false;
 }
 
@@ -191,6 +215,7 @@ void ui_state_cancel_key_record(ui_state *s)
 void ui_state_apply(ui_state *s)
 {
 	const naga_ctrl *ctrl = ui_state_selected(s);
+	char what[64];
 	int usage, mod, rc;
 
 	if (!ctrl) {
@@ -202,22 +227,44 @@ void ui_state_apply(ui_state *s)
 		return;
 	}
 
-	usage = naga_parse_usage(s->key);
-	if (usage < 0) {
-		ui_state_set_status(s, true, "unknown key \"%s\" (x, f5, enter, 1a)",
-				    s->key);
-		return;
+	switch (s->action) {
+	case UI_ACTION_MOUSE: {
+		const char *name = naga_mouse_name(s->mouse_button);
+
+		rc = naga_set_mouse(ctrl->ctr, (unsigned)s->mouse_button,
+				    (unsigned)s->layer);
+		snprintf(what, sizeof what, "mouse %s", name ? name : "?");
+		break;
 	}
+	case UI_ACTION_HYPERSHIFT:
+		rc = naga_set_hypershift(ctrl->ctr, (unsigned)s->layer);
+		snprintf(what, sizeof what, "hypershift");
+		break;
+	case UI_ACTION_KEY:
+	default:
+		usage = naga_parse_usage(s->key);
+		if (usage < 0) {
+			ui_state_set_status(
+			    s, true, "unknown key \"%s\" (x, f5, enter, 1a)", s->key);
+			return;
+		}
+		mod = (s->mod_ctrl ? 0x01 : 0) | (s->mod_shift ? 0x02 : 0) |
+		      (s->mod_alt ? 0x04 : 0) | (s->mod_super ? 0x08 : 0);
 
-	mod = (s->mod_ctrl ? 0x01 : 0) | (s->mod_shift ? 0x02 : 0) |
-	      (s->mod_alt ? 0x04 : 0) | (s->mod_super ? 0x08 : 0);
-
-	if (s->turbo)
-		rc = naga_set_turbo(ctrl->ctr, (unsigned)usage, (unsigned)mod,
-				    (unsigned)s->turbo_ms);
-	else
-		rc = naga_set_key(ctrl->ctr, (unsigned)usage, (unsigned)mod,
-				  (unsigned)s->layer);
+		if (s->turbo) {
+			rc = naga_set_turbo(ctrl->ctr, (unsigned)usage, (unsigned)mod,
+					    (unsigned)s->turbo_ms);
+			snprintf(what, sizeof what, "turbo %s", s->key);
+		} else {
+			rc = naga_set_key(ctrl->ctr, (unsigned)usage, (unsigned)mod,
+					  (unsigned)s->layer);
+			snprintf(what, sizeof what, "%s%s%s%s%s",
+				 mod & 0x01 ? "ctrl+" : "", mod & 0x02 ? "shift+" : "",
+				 mod & 0x04 ? "alt+" : "", mod & 0x08 ? "super+" : "",
+				 s->key);
+		}
+		break;
+	}
 
 	if (rc != NAGA_OK) {
 		ui_state_set_status(s, true, "%s: write failed: %s", ctrl->name,
@@ -227,8 +274,7 @@ void ui_state_apply(ui_state *s)
 
 	s->rec_ok[s->selected] =
 	    naga_get_rec(ctrl->ctr, &s->recs[s->selected]) == NAGA_OK;
-	ui_state_set_status(s, false, "%s: %s%s committed", ctrl->name,
-			    s->turbo ? "turbo " : "", s->key);
+	ui_state_set_status(s, false, "%s: %s committed", ctrl->name, what);
 	/*
 	 * Keep the editor fields as entered. The read-back layout of
 	 * non-keyboard assignments is not fully understood, so re-deriving the

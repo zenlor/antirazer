@@ -329,8 +329,29 @@ enum ui_key_capture ui_keys_capture(const SDL_Event *event, unsigned *usage,
 {
 	SDL_Scancode scancode;
 
-	if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN)
-		return UI_KEY_CAPTURE_UNSUPPORTED_MOUSE;
+	if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+		switch (event->button.button) {
+		case SDL_BUTTON_LEFT:
+			*usage = NAGA_MOUSE_LEFT;
+			break;
+		case SDL_BUTTON_RIGHT:
+			*usage = NAGA_MOUSE_RIGHT;
+			break;
+		case SDL_BUTTON_MIDDLE:
+			*usage = NAGA_MOUSE_MIDDLE;
+			break;
+		case SDL_BUTTON_X1:
+			*usage = NAGA_MOUSE_BACK;
+			break;
+		case SDL_BUTTON_X2:
+			*usage = NAGA_MOUSE_FORWARD;
+			break;
+		default:
+			return UI_KEY_CAPTURE_NONE;
+		}
+		*mod = 0;
+		return UI_KEY_CAPTURE_MOUSE;
+	}
 	if (event->type != SDL_EVENT_KEY_DOWN || event->key.repeat)
 		return UI_KEY_CAPTURE_NONE;
 

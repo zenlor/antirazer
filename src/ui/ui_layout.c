@@ -310,7 +310,14 @@ static void draw_key_combo(ui_state *s, int current, unsigned mod)
 	    current >= 0 ? ui_keys_find((unsigned)current) : NULL;
 	char preview[96];
 
-	if (selected_entry) {
+	if (s->action == UI_ACTION_MOUSE) {
+		const char *name = naga_mouse_name(s->mouse_button);
+
+		snprintf(preview, sizeof preview, "mouse: %s",
+			 name ? name : "select a button");
+	} else if (s->action == UI_ACTION_HYPERSHIFT) {
+		snprintf(preview, sizeof preview, "hypershift");
+	} else if (selected_entry) {
 		key_display(selected_entry, preview, sizeof preview);
 	} else if (s->key[0]) {
 		snprintf(preview, sizeof preview, "%s", s->key);
@@ -332,7 +339,53 @@ static void draw_key_combo(ui_state *s, int current, unsigned mod)
 	{
 		size_t count = 0;
 		const ui_key_entry *all = ui_keys_entries(&count);
+		static const struct {
+			int button;
+			const char *label;
+		} mouse_actions[] = {
+		    {NAGA_MOUSE_LEFT, "Mouse: left"},
+		    {NAGA_MOUSE_RIGHT, "Mouse: right"},
+		    {NAGA_MOUSE_MIDDLE, "Mouse: middle"},
+		    {NAGA_MOUSE_BACK, "Mouse: back"},
+		    {NAGA_MOUSE_FORWARD, "Mouse: forward"},
+		};
 		bool any = false;
+		bool actions_header = false;
+
+		for (size_t i = 0; i < sizeof mouse_actions / sizeof mouse_actions[0];
+		     i++) {
+			if (!contains_ci(mouse_actions[i].label, s->key_filter))
+				continue;
+			if (!actions_header) {
+				igTextDisabled("mouse & layer actions");
+				actions_header = true;
+				any = true;
+			}
+			igPushID_Int(1000 + mouse_actions[i].button);
+			if (igSelectable_Bool(
+				mouse_actions[i].label,
+				s->action == UI_ACTION_MOUSE &&
+				    s->mouse_button == mouse_actions[i].button,
+				ImGuiSelectableFlags_None, V(0.0f, 0.0f))) {
+				ui_state_set_mouse(s, mouse_actions[i].button);
+				igCloseCurrentPopup();
+			}
+			igPopID();
+		}
+		if (contains_ci("Hypershift", s->key_filter)) {
+			if (!actions_header) {
+				igTextDisabled("mouse & layer actions");
+				any = true;
+			}
+			igPushID_Int(2000);
+			if (igSelectable_Bool(
+				"Hypershift", s->action == UI_ACTION_HYPERSHIFT,
+				ImGuiSelectableFlags_None, V(0.0f, 0.0f))) {
+				ui_state_set_hypershift(s);
+				igCloseCurrentPopup();
+			}
+			igPopID();
+		}
 
 		for (int group = 0; group < UI_KEY_GROUP_COUNT; group++) {
 			bool header_done = false;
@@ -407,13 +460,14 @@ static void draw_editor(ui_state *s)
 		mod = (s->mod_ctrl ? 0x01 : 0) | (s->mod_shift ? 0x02 : 0) |
 		      (s->mod_alt ? 0x04 : 0) | (s->mod_super ? 0x08 : 0);
 
-		igText("key");
+		igText("binding");
 		igSameLine(0.0f, 12.0f);
 		draw_key_combo(s, naga_parse_usage(s->key), mod);
 		igSameLine(0.0f, 10.0f);
 		if (s->recording_key) {
-			if (igButton("Cancel", V(90.0f, 0.0f)))
-				ui_state_cancel_key_record(s);
+			igBeginDisabled(true);
+			igButton("Recording...", V(90.0f, 0.0f));
+			igEndDisabled();
 		} else {
 			if (igButton("Record", V(90.0f, 0.0f)))
 				ui_state_begin_key_record(s);
@@ -421,8 +475,10 @@ static void draw_editor(ui_state *s)
 
 		if (s->recording_key)
 			igTextColored(V4(0.95f, 0.75f, 0.35f, 1.0f),
-				      "listening - press a key; Esc cancels");
+				      "listening - press a key or a mouse button; "
+				      "Esc cancels");
 
+		igBeginDisabled(s->action != UI_ACTION_KEY);
 		igText("usage");
 		igSameLine(0.0f, 12.0f);
 		igSetNextItemWidth(150.0f);
@@ -441,12 +497,15 @@ static void draw_editor(ui_state *s)
 		igCheckbox("alt", &s->mod_alt);
 		igSameLine(0.0f, 14.0f);
 		igCheckbox("super", &s->mod_super);
+		igEndDisabled();
 
 		igSetNextItemWidth(150.0f);
 		igCombo_Str("layer", &s->layer, "normal\0hypershift\0", 0);
 
+		igBeginDisabled(s->action != UI_ACTION_KEY);
 		igCheckbox("turbo (autofire while held)", &s->turbo);
-		if (s->turbo) {
+		igEndDisabled();
+		if (s->turbo && s->action == UI_ACTION_KEY) {
 			igSetNextItemWidth(220.0f);
 			igSliderFloat("delay", &s->turbo_ms, 30.0f, 12000.0f, "%.0f ms",
 				      0);

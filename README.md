@@ -22,9 +22,10 @@ Two frontends share one device core:
 | modifiers (ctrl / shift / alt / super) | verified live (standard HID bitmap) |
 | apply without replug | verified (`00/B3` commit command) |
 | turbo / autofire | implemented — assignment type `0D`, rate = `1000000 / delay_ms` |
+| mouse-button actions | decoded from captures (type `01`); implemented, writes not yet exercised on hardware |
 | DPI set | implemented (`04/05`), not verified on hardware yet |
-| hypershift layer | record field is written and read; end-to-end behaviour not verified |
-| main buttons, wheel, DPI keys | readable and listed; writes use the thumb-button input class and are unverified |
+| hypershift layer | switch action decoded (type `0B`, inferred) and implemented; hold-vs-toggle behaviour unverified |
+| main buttons, wheel, DPI keys | default actions decoded; writing new actions to them untested (wheel up/down are not assignable) |
 | profiles, macros, lighting | not decoded — macros are host-side by design (use evdev/uinput) |
 
 Everything below that touches the device is the mapping domain (`02/0C` write,
@@ -69,6 +70,8 @@ naga-mapper get 40                   # read one record
 naga-mapper set 40 x                 # thumb button 1 -> "x"
 naga-mapper set 41 ctrl+shift+t      # thumb button 2 -> Ctrl+Shift+t
 naga-mapper set 42 f5 01             # button 3 -> F5 on the hypershift layer
+naga-mapper set 43 mouse:middle      # button 4 -> middle click
+naga-mapper set 44 hypershift        # button 5 -> Hypershift layer switch
 naga-mapper turbo 40 f5 3000         # button 1 -> F5 every 3 s while held
 naga-mapper commit                   # re-apply the stored table
 naga-mapper dpi 1600 1600            # set DPI (counts per inch)
@@ -79,8 +82,13 @@ naga-mapper dpi 1600 1600            # set DPI (counts per inch)
 * Wheel: `04` / `05`; DPI keys: `0B` / `0C`
 * Keys: `a`..`z`, `0`..`9`, `f1`..`f24`, `enter`, `esc`, `space`, `tab`, `pgup`,
   `kp1`, `playpause`, ... or a raw HID usage in hex (`1a`, `0x1a`)
+* Mouse: `mouse:left`, `mouse:right`, `mouse:middle`, `mouse:back`,
+  `mouse:forward`
+* Layer switch: `hypershift`
 * Modifiers: `ctrl`, `shift`, `alt`, `super`, `rctrl`, ... joined with `+`
-* Layers: `00` normal (default), `01` hypershift
+* Layers: `00` normal (default), `01` hypershift. Keys take modifiers before
+  the layer; mouse actions and `hypershift` take the layer directly
+  (`set 40 mouse:back 01`).
 
 Settings live in the mouse's flash and survive reboots and moving the mouse to
 another machine.
@@ -93,19 +101,25 @@ naga-ui
 
 The left column shows the thumb panel and a top view of the mouse; every
 control is clickable and its current binding is drawn on it (hover for a
-tooltip). The right column edits the selected control: key, modifiers, layer,
-turbo with delay, then **Write + commit**. DPI sits below the drawing. The
-status line reports each device operation.
+tooltip). The right column edits the selected control: its binding (keyboard
+key, mouse button or Hypershift switch), modifiers, layer, turbo with delay,
+then **Write + commit**. DPI sits below the drawing. The status line reports
+each device operation.
 
-The key field has three ways in:
+The binding field has three ways in:
 
-* a searchable chooser labelled with the current **keyboard layout** (the
-  labels follow the system keymap, but the value stored is always the HID
-  usage, so a binding keeps working on a different layout),
-* a **Record** button that captures the next key press together with its
-  modifiers (`Esc` cancels). Mouse buttons cannot be recorded yet — the
-  protocol has no verified encoding for device-side mouse assignments,
-* the raw usage field for anything not in the list (`f5`, `enter`, `1a`).
+* a searchable chooser that starts with **mouse & layer actions** — mouse
+  left/right/middle/back/forward and Hypershift — followed by keys labelled
+  with the current **keyboard layout** (the labels follow the system keymap,
+  but the value stored is always the HID usage, so a binding keeps working on
+  a different layout),
+* a **Record** button that captures the next key press (with its modifiers) or
+  mouse button; `Esc` cancels. While recording, the button shows
+  “Recording…” because a click is the binding,
+* the raw usage field for keyboard keys not in the list (`f5`, `enter`, `1a`).
+
+When a mouse or Hypershift action is selected, the key/usage, modifier and
+turbo fields are disabled; the layer selector still applies.
 
 `naga-ui --screenshot shot.bmp` renders the window, saves a screenshot and
 exits — handy for smoke tests on headless machines.

@@ -22,6 +22,13 @@
 #define UI_KEY_MAX 32
 #define UI_STATUS_MAX 160
 
+/* What the editor is currently building. */
+enum ui_action {
+	UI_ACTION_KEY,
+	UI_ACTION_MOUSE,
+	UI_ACTION_HYPERSHIFT,
+};
+
 typedef struct {
 	/* device */
 	bool connected;
@@ -30,6 +37,8 @@ typedef struct {
 	bool rec_ok[UI_MAX_CTRLS];
 
 	/* editor fields for the selected control */
+	enum ui_action action;
+	int mouse_button; /* enum naga_mouse */
 	char key[UI_KEY_MAX];
 	char key_filter[32]; /* filter text of the key chooser popup */
 	bool recording_key;  /* record button armed, waiting for a key */
@@ -72,6 +81,12 @@ void ui_state_refresh_selected(ui_state *s);
  * the modifier checkboxes. Used by the key chooser and the record button.
  */
 void ui_state_set_key(ui_state *s, unsigned usage, unsigned mod);
+
+/* Make the selected control act as a mouse button (enum naga_mouse). */
+void ui_state_set_mouse(ui_state *s, int button);
+
+/* Make the selected control the Hypershift layer switch. */
+void ui_state_set_hypershift(ui_state *s);
 
 /* Arm the record button; the next key press is captured by main.c. */
 void ui_state_begin_key_record(ui_state *s);
