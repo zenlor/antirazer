@@ -138,6 +138,33 @@ Two quirks are worth knowing:
 * A write is only applied after `00/B3`; without it the new record waits for
   the next enumeration (replug).
 
+The full reference — every decoded command, the record layout, what is still
+unknown and why the warnings exist — is in [`docs/protocol.md`](docs/protocol.md).
+
+## Protocol research
+
+The protocol was recovered from Synapse 3 USB captures of this exact device
+(`1532:008d`), then verified from Linux. The documents and the rig are part of
+the repository:
+
+| document | content |
+|---|---|
+| [`docs/protocol.md`](docs/protocol.md) | decoded transport, commands, records, quirks and open questions |
+| [`docs/research-log.md`](docs/research-log.md) | how it was decoded: findings, dead ends, and the one incident that damaged a record |
+| [`docs/vm-capture.md`](docs/vm-capture.md) | reproducing Synapse ground truth in a Windows VM |
+
+[`tools/`](tools/) holds the utilities used for that work: a raw protocol probe
+(`naga-probe`), an evdev event tap, usbmon capture and analysis scripts, and
+the QEMU VM harness. None of it is needed to configure the mouse.
+
+Raw material — USB captures, VM disks, vendor installers and firmware — is not
+committed: it is large, machine-specific and partly vendor data. The documents
+describe how to recreate and analyse it instead.
+
+The status table above is the honest boundary of what has been verified on
+hardware; sibling devices of the same generation probably share the encoding,
+but nothing here is tested against them.
+
 ## Troubleshooting
 
 **"Naga LH 2020 not found (check the udev rule or permissions)"** — install the
@@ -163,6 +190,8 @@ src/naga_ctrls.c  the control table (names, ctr values, groups)
 src/mapper/       naga-mapper CLI
 src/ui/           naga-ui: ui_state.c (logic), ui_layout.c (ImGui), main.c (SDL3)
 tests/            unit tests for the pure key/control code
+tools/            research: naga-probe, evtap, captures/ analysis, vm/ harness
+docs/             protocol reference, research log, VM capture guide
 nix/              cimgui derivation, package, dev shell
 udev/             device permission rule
 ```
@@ -171,17 +200,12 @@ udev/             device permission rule
 nix develop          # toolchain + dependencies
 make                 # naga-mapper and naga-ui
 make test            # key parsing / naming / control-table tests
+make tools           # research utilities: naga-probe, evtap
 make install         # PREFIX=... UDEVDIR=...
 ```
 
 `make CIMGUI=<prefix>` builds the GUI outside Nix. C sources carry
 `SPDX-License-Identifier: GPL-2.0-or-later OR BSD-2-Clause` headers.
-
-The protocol was decoded from Synapse 3 USB captures of this exact device
-(`1532:008d`); the assignments above are the ones verified live on hardware,
-and the status table says where that stops. Sibling devices of the same
-generation probably share the encoding, but nothing here is tested against
-them.
 
 ## License
 
