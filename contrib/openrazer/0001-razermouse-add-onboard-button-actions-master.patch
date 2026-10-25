@@ -1,4 +1,4 @@
-From 6a4d9d6eeb30cda3d2d43da193ee0c0fcc913dc2 Mon Sep 17 00:00:00 2001
+From 4d1850f0dc50aa3b95f5b4851c9b372477b2cd41 Mon Sep 17 00:00:00 2001
 From: Lorenzo Giuliani <lorenzo@frenzart.com>
 Date: Sun, 25 Oct 2026 12:47:00 +0100
 Subject: [PATCH] razermouse: add onboard button actions for the Naga LH 2020
@@ -26,13 +26,13 @@ The read request carries the input class in argument 3 (0x02 for the thumb
 grid); without it this firmware does not answer mapping reads.
 ---
  .../dbus_services/dbus_methods/__init__.py    |   1 +
- .../dbus_methods/mouse_onboard.py             | 114 ++++++++++++++++++
+ .../dbus_methods/mouse_onboard.py             | 117 ++++++++++++++++++
  daemon/openrazer_daemon/hardware/mouse.py     |   7 +-
  driver/razerchromacommon.c                    |  57 +++++++++
  driver/razerchromacommon.h                    |   4 +
- driver/razermouse_driver.c                    |  89 ++++++++++++++
+ driver/razermouse_driver.c                    |  89 +++++++++++++
  driver/razermouse_driver.h                    |   5 +
- 7 files changed, 276 insertions(+), 1 deletion(-)
+ 7 files changed, 279 insertions(+), 1 deletion(-)
  create mode 100644 daemon/openrazer_daemon/dbus_services/dbus_methods/mouse_onboard.py
 
 diff --git a/daemon/openrazer_daemon/dbus_services/dbus_methods/__init__.py b/daemon/openrazer_daemon/dbus_services/dbus_methods/__init__.py
@@ -46,10 +46,10 @@ index 557399a..695bffe 100644
 +from openrazer_daemon.dbus_services.dbus_methods.mouse_onboard import *
 diff --git a/daemon/openrazer_daemon/dbus_services/dbus_methods/mouse_onboard.py b/daemon/openrazer_daemon/dbus_services/dbus_methods/mouse_onboard.py
 new file mode 100644
-index 0000000..91ae53b
+index 0000000..4caf7a7
 --- /dev/null
 +++ b/daemon/openrazer_daemon/dbus_services/dbus_methods/mouse_onboard.py
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,117 @@
 +# SPDX-License-Identifier: GPL-2.0-or-later
 +
 +"""
@@ -58,7 +58,10 @@ index 0000000..91ae53b
 +The device stores one action per button and layer. An action is
 +<type> <length> <data...>:
 +
++  0x00 0x00                               device default
++  0x01 <button>                           mouse button (1 left, 2 right, 3 middle, 4 back, 5 forward)
 +  0x02 <mod> <usage>                      keyboard key (HID usage, modifier bitmap)
++  0x0B 0x01                               Hypershift layer switch
 +  0x0D <mod> <usage> <rate hi> <rate lo>  autofire, rate = 1000000 / delay in ms
 +
 +The action is written to flash and only becomes active after the driver's

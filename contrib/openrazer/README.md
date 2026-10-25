@@ -22,13 +22,15 @@ for this device.
 | `razermouse.ko` contains the `button_action` attribute and helpers | yes |
 | patched daemon package builds and contains the `razer.device.onboard` methods | yes |
 | daemon method logic (validation, selector/action bytes, slicing) | standalone unit test passed |
+| action encodings (mouse `01`, Hypershift `0B`, DPI `06`, profile `07`, tilt `0E`) | decoded from this device's captures; forwarded unchanged by the daemon |
 | master variant applies to OpenRazer master (`477f4d6`, 2026-02-28) | yes, with context offsets |
 | exercised on hardware | **not yet** — there was no USB access in the development environment |
 
 The USB write bytes are the ones antirazer verified live on the device
-(`02/0C` records plus the `00/B3` commit). The read-back decoding of
-non-keyboard actions is still assumed rather than measured — see
-*Known unknowns*.
+(`02/0C` records plus the `00/B3` commit). Mouse-button and Hypershift records
+were taken from Synapse captures of the same device; writing them through this
+patch still needs a run on the mouse. The read-back decoding of non-keyboard
+actions is assumed rather than measured — see *Known unknowns*.
 
 ## The API
 
@@ -49,8 +51,14 @@ writing **five to ten bytes** selects it and stores an action:
 | action | bytes | meaning |
 |---|---|---|
 | default | `00 00` | device default for that button |
+| mouse | `01 01 <button>` | mouse button: 1 left, 2 right, 3 middle, 4 back, 5 forward |
 | key | `02 02 <mod> <usage>` | keyboard key; `mod` is the HID modifier bitmap, `usage` the HID keyboard usage |
+| hypershift | `0B 01 01` | Hypershift layer switch (inferred from a Synapse capture) |
 | autofire | `0D 04 <mod> <usage> <rate hi> <rate lo>` | repeats while held; `rate = 1000000 / delay_ms`, big endian |
+
+All five were decoded from captures of this device. The layer byte selects the
+table: records written with layer `01` are the bindings active while
+Hypershift is held.
 
 Reading returns the ten-byte record
 `<store> <button> <layer> <type> <length> <data...>` for the button selected
@@ -74,8 +82,15 @@ od -An -tx1 "$SYS/button_action"
 # bind button 1 to Ctrl+Shift+T
 printf '\x01\x40\x00\x02\x02\x03\x17' > "$SYS/button_action"
 
+# bind button 1 to middle click
+printf '\x01\x40\x00\x01\x01\x03' > "$SYS/button_action"
+
 # bind button 1 to F5 as autofire every 3 seconds
 printf '\x01\x40\x00\x0d\x04\x00\x3c\x01\x5e' > "$SYS/button_action"
+
+# make button 2 the Hypershift layer switch, then bind button 3 on layer 1
+printf '\x01\x41\x00\x0b\x01\x01' > "$SYS/button_action"
+printf '\x01\x42\x01\x02\x02\x00\x68' > "$SYS/button_action"
 ```
 
 Writes are committed automatically (`00/B3`), so the new binding is active
@@ -92,6 +107,12 @@ busctl --user call org.razer /org/razer/device/<serial> \
   org.razer.razer.device.onboard getButtonAction yyy 1 64 0
 busctl --user call org.razer /org/razer/device/<serial> \
   org.razer.razer.device.onboard setButtonAction yyyay 1 64 0 4 2 2 3 23
+# button 1 -> middle click
+busctl --user call org.razer /org/razer/device/<serial> \
+  org.razer.razer.device.onboard setButtonAction yyyay 1 64 0 3 1 1 3
+# button 2 -> Hypershift layer switch
+busctl --user call org.razer /org/razer/device/<serial> \
+  org.razer.razer.device.onboard setButtonAction yyyay 1 65 0 3 11 1 1
 ```
 
 `pylib` wrappers are **not** part of this first milestone; the methods are
@@ -167,9 +188,12 @@ argument described below.
   exposed. Other button families need their own class (`01` for main buttons,
   `06` for DPI keys) before they can be read.
 * **Read-back of non-key actions is assumed, not verified.** The daemon slices
-  the action out of the reply at byte 3, matching the write layout. For a
-  keyboard binding that is consistent with the reads antirazer did on the
-  device; autofire read-back has not been confirmed.
+  the action out of the reply at byte 3, matching the write layout. That is
+  consistent with the record format in the captures, but reading a mouse or
+  Hypershift record back through this patch has not been exercised.
+* **Hypershift hold-vs-toggle is unverified.** Writing `0B 01 01` makes a
+  button the Hypershift switch (as Synapse does); whether it acts as
+  hold-to-switch or a toggle is firmware behaviour and has not been observed.
 * **Only the live profile and the thumb grid are exposed.** Storage ids 2-5,
   main buttons, wheel and DPI keys are deliberately rejected by the driver's
   validation until their write behaviour is verified on hardware.

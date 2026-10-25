@@ -9,10 +9,10 @@ index 557399a..695bffe 100644
 +from openrazer_daemon.dbus_services.dbus_methods.mouse_onboard import *
 diff --git a/openrazer_daemon/dbus_services/dbus_methods/mouse_onboard.py b/openrazer_daemon/dbus_services/dbus_methods/mouse_onboard.py
 new file mode 100644
-index 0000000..91ae53b
+index 0000000..4caf7a7
 --- /dev/null
 +++ b/openrazer_daemon/dbus_services/dbus_methods/mouse_onboard.py
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,117 @@
 +# SPDX-License-Identifier: GPL-2.0-or-later
 +
 +"""
@@ -21,7 +21,10 @@ index 0000000..91ae53b
 +The device stores one action per button and layer. An action is
 +<type> <length> <data...>:
 +
++  0x00 0x00                               device default
++  0x01 <button>                           mouse button (1 left, 2 right, 3 middle, 4 back, 5 forward)
 +  0x02 <mod> <usage>                      keyboard key (HID usage, modifier bitmap)
++  0x0B 0x01                               Hypershift layer switch
 +  0x0D <mod> <usage> <rate hi> <rate lo>  autofire, rate = 1000000 / delay in ms
 +
 +The action is written to flash and only becomes active after the driver's
