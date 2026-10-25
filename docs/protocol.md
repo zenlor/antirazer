@@ -77,30 +77,44 @@ noted:
 
 ### Read
 
-`02/8C`, size `0x0A`, arguments `01 <ctr> 00 <class>`:
+`02/8C`, size `0x0A`, arguments `01 <ctr> 00 02` (record marker, control,
+layer, input class). The answer carries the record:
 
 ```
-01   record marker
-ctr  control instance (table below)
-00   layer requested (00 normal)
-02   input class (thumb buttons)
+01 <ctr> <layer> <type> <length> <data...>
 ```
 
-The answer carries the record in its arguments. The leading `01` is a record
-marker that Synapse increments as a rolling counter; any non-zero value works.
-Reads are flaky directly after a burst of writes — the device echoes the
-request with status `00` instead of answering; wait about a second and retry.
+The leading `01` is a record marker that Synapse increments as a rolling
+counter; any non-zero value works. Reads are flaky directly after a burst of
+writes — the device echoes the request with status `00` instead of answering;
+wait about a second and retry.
+
+One caveat on the reply's third byte: for a button bound as the Hypershift
+key it can read `01` on both layers, i.e. it acts as a flag rather than an
+echo of the requested layer (the same behaviour the Naga V2 Pro shows).
 
 ### Write
 
 `02/0C`, size `0x0A`, arguments:
 
 ```
-01 <ctr> <layer> <class> <type> <mod> <usage> 00 00 00
+01 <ctr> <layer> <type> <length> <data...> 00...
 ```
 
-* `class` — `02` for thumb buttons (the only value verified for writes)
-* `type` — `02` keyboard key, `0D` autofire, `00` device default
+The ten-byte record Synapse pushes is exactly this frame, padded with zeros.
+An *action* is the `<type> <length> <data...>` part:
+
+| type | meaning | data |
+|---|---|---|
+| `00` | default / disabled | – |
+| `01` | mouse button | `<button>`: 1 left, 2 right, 3 middle, 4 back, 5 forward; 9/10 are extra buttons |
+| `02` | keyboard key | `<mod> <usage>` |
+| `06` | DPI function | `<which>` (`01` up, `02` down) |
+| `07` | profile function | `<which>` (`04` on the profile key) |
+| `0B` | Hypershift key | `01` (inferred, see below) |
+| `0D` | autofire | `<mod> <usage> <rate_hi> <rate_lo>` |
+| `0E` | wheel tilt | `<09/0A> 00 8E` |
+
 * `mod` — standard HID modifier bitmap: bit0 LCtrl, bit1 LShift, bit2 LAlt,
   bit3 LGUI, bits 4..7 the right-hand equivalents
 * `usage` — HID keyboard usage (`0x04`=`a` … `0x1D`=`z`, `0x1E`..`0x27`=`1`..`0`,
@@ -109,11 +123,19 @@ request with status `00` instead of answering; wait about a second and retry.
 The device accepts the write with status `02` and stores it in flash, but the
 new binding only becomes active after the commit command.
 
-Synapse's capture groups the same ten bytes as
-`01 <ctr> <layer> <input-id×3> <assign×4>`, where the input id for a thumb
-button is `02 02 00` and a keyboard assignment is `02 <mod> <usage> 00`. Both
-descriptions produce the same bytes for a keyboard binding; the record layout
-beyond that is one of the open questions below.
+This action encoding is shared with newer Naga generations (OpenRazer PR
+#2962) and the Basilisk Ultimate's class-`02` protocol, which is why the
+interface names there (`button_action`) are reused.
+
+Example records from the captures:
+
+```
+01 01 00 01 01 01        left button -> left click
+01 40 00 02 02 00 1e     thumb 1     -> key "1"
+01 40 00 0d 04 00 1b 01 4d  thumb 1  -> autofire "x" every 3003 ms
+01 40 00 0b 01 01        thumb 1     -> Hypershift key (inferred)
+01 34 00 0e 03 0a 00 8e  tilt right  -> wheel-tilt action
+```
 
 ### Commit
 
@@ -123,21 +145,28 @@ survive reboots and moving the mouse between machines.
 
 ### Control instances
 
-| ctr | control | notes |
+Synapse pushes 22 controls on connect (× both layers); this is the set the
+firmware exposes:
+
+| ctr | control | default action |
 |---|---|---|
-| `01` `02` `03` | left, right, middle | main buttons |
-| `04` `05` | wheel up, wheel down | |
-| `0B` `0C` | DPI up, DPI down | |
-| `0E` | profile cycle (?) | seen in captures |
-| `40`..`48` | thumb buttons `1`..`9` | write verified live |
-| `49` | thumb button `0` | write verified live |
-| `4A` | thumb button `-` | write verified live |
-| `4B` | thumb button `=` | write verified live |
+| `01` `02` `03` | left, right, middle | type `01`, mouse buttons 1/2/3 |
+| `09` `0A` | extra mouse buttons | type `01`, mouse buttons 9/10 |
+| `0B` `0C` | DPI up, DPI down | type `06`, data `01`/`02` |
+| `0E` | profile key | type `07`, data `04` |
+| `34` `35` | wheel tilt right, left | type `0E`, data `0A`/`09 00 8E` |
+| `40`..`48` | thumb buttons `1`..`9` | type `02`, digits `1`..`9` |
+| `49` | thumb button `0` | type `02`, digit `0` |
+| `4A` | thumb button `-` | type `02`, minus |
+| `4B` | thumb button `=` | type `02`, equal |
 
 The thumb grid is three columns by four rows; the printed labels run
-`1 2 3 / 4 5 6 / 7 8 9 / 0 - =`. Writing to the other controls uses the same
-command shape but a different input class in the firmware's model, and has not
-been verified — see the status table in the README.
+`1 2 3 / 4 5 6 / 7 8 9 / 0 - =`. antirazer also lists wheel up/down (`04`/`05`),
+but they are not part of the firmware's assignable table.
+
+Writing a record to the main buttons is verified by the default table itself
+(the device ships with type-`01` records); writing a *new* action to them has
+not been exercised yet.
 
 ### Autofire (turbo)
 
@@ -147,15 +176,8 @@ Written with the same `02/0C` command, size `0x0A`:
 01 <ctr> 00 0D 04 <mod> <usage> <rate_hi> <rate_lo> 00
 ```
 
-`rate = 1000000 / delay_ms`, big endian (a 3000 ms delay is `0x015E`). The
-deliberately weird `0D 04` pair is what Synapse sends; the rate field is not
-present in a normal key record.
-
-Reading an autofire record back is **not verified**. The mapping read decoder
-in antirazer treats the type byte as `0x0D`, which matches the write position
-of the marker but not necessarily what the device echoes; the UI therefore
-keeps the editor fields you entered after a successful write instead of
-re-deriving them from the read-back.
+`rate = 1000000 / delay_ms`, big endian (a 3000 ms delay is `0x014D`). The
+rate field is not present in a normal key record.
 
 ### Assignment types
 
@@ -163,16 +185,29 @@ The firmware's mapping engine knows 165 assignment types
 (`MAP_MACRO`, `MAP_MACROKEY`, `MAP_HYPERSHIFTKEY`, `MAP_KEYMAP_UP`/`_DN`,
 `MAP_JS_OBM_PROFILE_*`, `MAP_DPI_*`, `MAP_LEDCOLOUR`, `MAP_LEDEFFECT`,
 `MAP_LAUNCH_PROGRAM`, `MAP_OFF`, `MAP_TEXT_BLOCK`, media keys …). Those names
-come from static analysis of the Synapse mapping module; only the numeric
-values for keyboard (`02`) and autofire (`0D`) have been confirmed against the
-device, and `00` is used for a pristine/default record.
+come from static analysis of the Synapse mapping module. The numeric values
+confirmed from this device's captures are `00`, `01`, `02`, `06`, `07`, `0B`,
+`0D` and `0E`; the remainder are still unmapped. Type `0B` is attributed to
+`MAP_HYPERSHIFTKEY` by elimination (it is the only captured write that is not
+one of the other known families) and needs hardware confirmation.
 
 ### Layers
 
-Each record carries a layer byte: `00` normal, `01` hypershift. Synapse pushes
-both layers for every control on connect. Writing layer `01` stores a
-hypershift binding, but the end-to-end behaviour of hypershift (what toggles
-it, how it interacts with the profile key) has not been verified.
+Each record carries a layer byte: `00` normal, `01` Hypershift. Synapse pushes
+both layers for every control on connect (22 × 2 = 44 records), and layer-`01`
+records use the same action encoding as layer `00`.
+
+A button is made the Hypershift key with a normal-layer record of type `0B`,
+length `01`, data `01`:
+
+```
+01 40 00 0b 01 01
+```
+
+That is how Synapse writes it; whether the key acts as hold-to-switch or a
+toggle is firmware behaviour and has not been observed yet. The layer-`01`
+bindings are what the key exposes.
+
 
 ## DPI (class `04`)
 

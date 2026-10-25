@@ -35,8 +35,9 @@ TYPE_NAMES = {
     0x02: "key",
     0x03: "macro",
     0x04: "macro-repeat",
-    0x06: "device-function",
-    0x07: "device-function",
+    0x06: "dpi-function",
+    0x07: "profile-function",
+    0x0B: "hypershift",
     0x0D: "autofire",
     0x0E: "wheel-tilt",
 }
@@ -108,6 +109,14 @@ def decode(record):
         delay = 1000000 // rate if rate else 0
         action = (f"autofire {mods + '+' if mods else ''}{usage_name(params[1])}"
                   f" every {delay} ms")
+    elif typ == 0x0B and length >= 1:
+        action = f"hypershift layer {params[0]}"
+    elif typ == 0x06 and length >= 1:
+        action = f"dpi-function {params[0]}"
+    elif typ == 0x07 and length >= 1:
+        action = f"profile-function {params[0]:02x}"
+    elif typ == 0x0E:
+        action = f"wheel-tilt {params.hex(' ')}"
     elif typ in (0x03, 0x04) and length >= 2:
         macro = (params[0] << 8) | params[1]
         action = f"{TYPE_NAMES[typ]} id {macro}"
@@ -228,12 +237,14 @@ def self_test():
     mouse = bytes([1, 0x41, 0x00, 0x01, 0x01, 0x03, 0, 0, 0, 0])
     auto = bytes([1, 0x42, 0x00, 0x0D, 0x04, 0x00, 0x3E, 0x01, 0x4D, 0])
     layer2 = bytes([1, 0x43, 0x01, 0x02, 0x02, 0x00, 0x68, 0, 0, 0])
+    hyper = bytes([1, 0x44, 0x00, 0x0B, 0x01, 0x01, 0, 0, 0, 0])
 
     assert "key ctrl+shift+t" in decode(key), decode(key)
     assert "mouse middle" in decode(mouse), decode(mouse)
     assert "autofire f5 every 3003 ms" in decode(auto), decode(auto)
     assert "ctr 43 layer 01" in decode(layer2), decode(layer2)
-    assert "default" in decode(bytes([1, 0x44, 0, 0, 0, 0, 0, 0, 0, 0]))
+    assert "hypershift layer 1" in decode(hyper), decode(hyper)
+    assert "default" in decode(bytes([1, 0x45, 0, 0, 0, 0, 0, 0, 0, 0]))
 
     base, after, changed = diff_records([key, auto], [key, auto, mouse])
     assert len(changed) == 1, changed

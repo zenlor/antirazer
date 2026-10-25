@@ -112,6 +112,35 @@ been matched to the device so far.
 not because a driver remaps them. The map survives a power cycle and works on
 a machine that never ran Synapse, so it is onboard.
 
+## 2026-10-25 — mouse buttons and the Hypershift action
+
+Re-running the original Synapse captures through
+`tools/captures/records.py` answered the remaining action-type questions
+without another VM session.
+
+The connect push contains the full table: 22 controls × 2 layers.
+
+* **Mouse buttons** are type `01`, length `01`, data = button id (`1` left,
+  `2` right, `3` middle, `9`/`10` for the extra buttons). This is the same
+  encoding as the Naga V2 Pro (OpenRazer PR #2962) and the Basilisk Ultimate
+  captures.
+* A deliberate edit in the second capture wrote `01 40 00 0b 01 01` (thumb
+  button 1): type `0B`, length `01`, data `01`. `0B` is the only captured
+  family not otherwise accounted for, and the decompiled enum contains
+  `MAP_HYPERSHIFTKEY`, so this is the **Hypershift switch**. Whether it acts
+  as hold-to-switch or a toggle is still unobserved.
+* The **DPI keys** use type `06` (data `01`/`02`), the **profile key** type
+  `07` (data `04`), and the **wheel tilts** type `0E`.
+* Layer-`01` records exist for every control and use the same action encoding
+  as layer `00`.
+
+The record layout is `01 <ctr> <layer> <type> <length> <data...>`. The
+`class/type/mod/usage` grouping in the first write-up was a misreading — for a
+keyboard binding the type byte (`02`) and the length byte (`02`) happen to be
+equal, so the fields looked interchangeable. The write path was already
+correct; the read decoder took the type from the length byte and is corrected
+together with the mouse support.
+
 ## State of the test device
 
 The device used for development has its own layout in flash: thumb buttons were
@@ -121,15 +150,16 @@ That is harmless for mapping work but worth knowing when comparing captures.
 
 ## Open questions
 
-1. The input class for main buttons, wheel and DPI keys. Only thumb buttons
-   (`02`) have been written successfully; the firmware's record model suggests
-   `01`/`06` for the other families.
-2. Which record bytes the device echoes for non-keyboard assignments. Read-back
-   of autofire and the meaning of the class/type pair are unverified.
-3. Numeric values for the remaining 163 assignment types (macros, hypershift,
-   DPI actions, profiles, LED actions, launch program, …).
-4. Whether hypershift layers are switched by the profile key or by a host-side
-   modifier, and how they interact with profiles.
+1. Writing new actions to the main buttons, DPI keys, profile key and wheel
+   tilts. Their default records show the encoding, but changing them is
+   untested.
+2. Whether the Hypershift key acts as hold-to-switch or a toggle, and how it
+   interacts with profiles.
+3. Numeric values for the remaining assignment types (`MAP_MACRO`, LED
+   actions, launch program, …).
+4. Reading non-keyboard records back: the reply layout is assumed to mirror
+   the write record, and the reply's third byte behaves as a flag for
+   Hypershift keys.
 5. The profile domain (`05/*`) and the 22-byte `02/84` record.
 6. Lighting: the classic frame format is known, the extended matrix frames and
    their colour model are not.

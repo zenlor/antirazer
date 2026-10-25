@@ -128,14 +128,15 @@ a 90-byte payload:
 [89]   0
 ```
 
-Mapping records are ten argument bytes `01 <ctr> <layer> <class> <type>
-<mod> <usage> 00 00`: the control instance (`ctr`), the layer, the assignment
-type (`00` default, `02` keyboard key, `0D` turbo), and the HID modifier map
-plus keyboard usage.
+Mapping records are ten argument bytes `01 <ctr> <layer> <type> <length>
+<data...>`: the control instance (`ctr`), the layer, the action type (`01`
+mouse button, `02` keyboard key, `0B` Hypershift, `0D` autofire, …), the data
+length and its payload. A keyboard payload is a HID modifier map plus usage; a
+mouse payload is a button id.
 
 | operation | command | arguments |
 |---|---|---|
-| write record | `02/0C` | `01 ctr layer 02 type mod usage ...` |
+| write record | `02/0C` | `01 ctr layer type length data...` |
 | read record | `02/8C` | `01 ctr 00 02` |
 | commit | `00/B3` | `00` |
 | set DPI | `04/05` | `00 x_lo x_hi y_lo y_hi` |
