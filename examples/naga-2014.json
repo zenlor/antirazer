@@ -1,12 +1,17 @@
 {
   "device": "2014",
   "bindings": {
-    "1": "x",
-    "2": "mouse:middle",
-    "3": {"sequence": [
+    "normal": {
+      "1": "x",
+      "2": "mouse:middle",
+      "3": "macro:copy_paste"
+    }
+  },
+  "macros": {
+    "copy_paste": [
       {"key": "ctrl+c"},
       {"delay": 100},
       {"key": "ctrl+v"}
-    ]}
+    ]
   }
 }

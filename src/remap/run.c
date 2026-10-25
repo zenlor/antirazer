@@ -294,17 +294,22 @@ static struct libevdev *find_run_node(enum remap_device model,
 }
 
 static int build_entries(const struct remap_map *map,
-			 enum remap_device model, struct plan_entry **out,
-			 size_t *out_count, char *err, size_t errlen)
+			 enum remap_device model, struct arena *arena,
+			 struct plan_entry **out, size_t *out_count, char *err,
+			 size_t errlen)
 {
 	struct plan_entry *entries;
 	size_t count = 0;
 
-	entries = calloc(map->count ? map->count : 1, sizeof *entries);
+	entries = arena_alloc(arena,
+			      (map->count ? map->count : 1) * sizeof *entries,
+			      _Alignof(struct plan_entry));
 	if (!entries) {
 		seterr(err, errlen, "out of memory");
 		return -1;
 	}
+	memset(entries, 0,
+	       (map->count ? map->count : 1) * sizeof *entries);
 
 	for (size_t i = 0; i < map->count; i++) {
 		const struct remap_binding *b = &map->bindings[i];
@@ -342,7 +347,6 @@ static int build_entries(const struct remap_map *map,
 fail:
 	for (size_t j = 0; j < count; j++)
 		remap_plan_free(&entries[j].plan);
-	free(entries);
 	return -1;
 }
 
@@ -613,6 +617,7 @@ int remap_run(const struct remap_map *map, enum remap_device model,
 	struct plan_entry *entries = NULL;
 	size_t entry_count = 0;
 	struct runner r;
+	struct arena arena;
 	char path[64] = "";
 	int codes[256];
 	int rc;
@@ -621,10 +626,14 @@ int remap_run(const struct remap_map *map, enum remap_device model,
 		seterr(err, errlen, "device model is not resolved");
 		return -1;
 	}
-	if (build_entries(map, model, &entries, &entry_count, err, errlen) < 0)
+	arena_init(&arena, 4096);
+	if (build_entries(map, model, &arena, &entries, &entry_count, err,
+			  errlen) < 0) {
+		arena_free(&arena);
 		return -1;
+	}
 	if (entry_count == 0) {
-		free(entries);
+		arena_free(&arena);
 		return 0;
 	}
 	if (entry_count > sizeof codes / sizeof codes[0]) {
@@ -662,7 +671,7 @@ int remap_run(const struct remap_map *map, enum remap_device model,
 	cleanup(&r);
 	for (size_t i = 0; i < entry_count; i++)
 		remap_plan_free(&entries[i].plan);
-	free(entries);
+	arena_free(&arena);
 	return rc;
 
 fail_dev:
@@ -671,6 +680,6 @@ fail_dev:
 fail_entries:
 	for (size_t i = 0; i < entry_count; i++)
 		remap_plan_free(&entries[i].plan);
-	free(entries);
+	arena_free(&arena);
 	return -1;
 }

@@ -197,18 +197,26 @@ static int mod_keycode(unsigned bit)
 static int add_event(struct remap_plan *plan, uint32_t at, uint16_t type,
 		     uint16_t code, int32_t value, char *err, size_t errlen)
 {
-	struct remap_event *events;
+	if (plan->count == plan->capacity) {
+		size_t cap = plan->capacity ? plan->capacity * 2 : 32;
+		struct remap_event *events;
 
-	if (plan->count == SIZE_MAX / sizeof *events) {
-		seterr(err, errlen, "plan is too large");
-		return -1;
+		if (cap > SIZE_MAX / sizeof *events) {
+			seterr(err, errlen, "plan is too large");
+			return -1;
+		}
+		events = arena_alloc(&plan->arena, cap * sizeof *events,
+				     _Alignof(struct remap_event));
+		if (!events) {
+			seterr(err, errlen, "out of memory");
+			return -1;
+		}
+		if (plan->events)
+			memcpy(events, plan->events,
+			       plan->count * sizeof *events);
+		plan->events = events;
+		plan->capacity = cap;
 	}
-	events = realloc(plan->events, (plan->count + 1) * sizeof *events);
-	if (!events) {
-		seterr(err, errlen, "out of memory");
-		return -1;
-	}
-	plan->events = events;
 	plan->events[plan->count].at_ms = at;
 	plan->events[plan->count].type = type;
 	plan->events[plan->count].code = code;
@@ -434,6 +442,7 @@ int remap_plan_build(const struct remap_binding *b, struct remap_plan *plan,
 	uint32_t t = 0;
 
 	memset(plan, 0, sizeof *plan);
+	arena_init(&plan->arena, 8192);
 
 	if (!b->is_sequence) {
 		switch (b->type) {
@@ -459,8 +468,13 @@ int remap_plan_build(const struct remap_binding *b, struct remap_plan *plan,
 			goto fail;
 		}
 	} else {
-		for (size_t i = 0; i < b->seq.count; i++) {
-			const struct remap_step *s = &b->seq.steps[i];
+		if (!b->seq) {
+			seterr(err, errlen, "macro \"%s\" is not resolved",
+			       b->macro ? b->macro : b->id);
+			goto fail;
+		}
+		for (size_t i = 0; i < b->seq->count; i++) {
+			const struct remap_step *s = &b->seq->steps[i];
 
 			switch (s->kind) {
 			case REMAP_STEP_KEY:
@@ -510,8 +524,9 @@ fail:
 
 void remap_plan_free(struct remap_plan *plan)
 {
-	free(plan->events);
+	arena_free(&plan->arena);
 	plan->events = NULL;
 	plan->count = 0;
+	plan->capacity = 0;
 	plan->duration_ms = 0;
 }

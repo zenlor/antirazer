@@ -1,8 +1,6 @@
-# antirazer — naga-mapper + naga-ui, plus the udev rule.
+# antirazer — mapping tools, GUI, remap tool and the udev rule.
 pkgs:
 let
-  cimgui = import ./cimgui.nix pkgs;
-
   # Only ship what the build needs: the repo's research material (and any
   # VM images next to it) must never be copied into the store.
   src = pkgs.lib.fileset.toSource {
@@ -13,6 +11,7 @@ let
       ../tests
       ../tools
       ../udev
+      ../vendor
     ];
   };
 in
@@ -23,13 +22,11 @@ pkgs.stdenv.mkDerivation (finalAttrs: {
   inherit src;
 
   nativeBuildInputs = [ pkgs.pkg-config ];
-  buildInputs = [ pkgs.libusb1 pkgs.libevdev pkgs.jansson pkgs.sdl3 ];
-
-  env.CIMGUI = "${cimgui}";
+  buildInputs = [ pkgs.libusb1 pkgs.libevdev pkgs.sdl3 ];
 
   buildPhase = ''
     runHook preBuild
-    make -j$NIX_BUILD_CORES CIMGUI="$CIMGUI"
+    make -j$NIX_BUILD_CORES
     runHook postBuild
   '';
 

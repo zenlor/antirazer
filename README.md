@@ -46,14 +46,13 @@ nix profile install .    # or: nix profile install git+https://git.sr.ht/~zenlor
 ### From source
 
 ```sh
-nix develop -c make      # toolchain, libusb, libevdev, jansson, SDL3, cimgui
+nix develop -c make      # toolchain, libusb, libevdev, SDL3; cJSON/cimgui vendored
 sudo make install        # PREFIX=/usr/local by default
 ```
 
-Outside Nix you need `libusb-1.0`, `libevdev` and `jansson` (remap tool),
-`SDL3` (for the GUI) and `cimgui` built as a static library; pass its prefix
-with `make CIMGUI=/path/to/cimgui`. The exact cimgui revision is pinned in
-`nix/cimgui.nix`.
+Outside Nix you need `libusb-1.0`, `libevdev` and `SDL3`. cJSON and
+cimgui/ImGui are vendored under `vendor/` and built from source, so there is
+no extra prefix to point at.
 
 ### Device permissions
 
@@ -255,7 +254,8 @@ tests/            unit tests for the key/control and remap code
 examples/         example naga-remap JSON maps
 tools/            research: naga-probe, evtap, captures/ analysis, vm/ harness
 docs/             protocol reference, research log, VM capture guide
-nix/              cimgui derivation, package, dev shell
+nix/              package and dev shell
+vendor/           cJSON and cimgui/ImGui (MIT), built from source
 udev/             device permission rule
 ```
 
@@ -267,8 +267,9 @@ make tools           # research utilities: naga-probe, evtap
 make install         # PREFIX=... UDEVDIR=...
 ```
 
-`make CIMGUI=<prefix>` builds the GUI outside Nix. C sources carry
-`SPDX-License-Identifier: GPL-2.0-or-later OR BSD-2-Clause` headers.
+C sources carry `SPDX-License-Identifier: GPL-2.0-or-later OR BSD-2-Clause`
+headers. The vendored cJSON and cimgui/ImGui sources keep their MIT licenses
+in `vendor/`.
 
 ## License
 

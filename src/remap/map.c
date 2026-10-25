@@ -1,16 +1,18 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later OR BSD-2-Clause */
 #include "remap/map.h"
 
+#include <cJSON.h>
 #include <errno.h>
-#include <jansson.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define MAX_BINDINGS 256
+#define MAX_MACROS 64
 #define MAX_STEPS 512
 #define MAX_TEXT 1024
+#define MAX_MACRO_NAME 64
 
 static void seterr(char *err, size_t errlen, const char *fmt, ...)
 {
@@ -23,6 +25,29 @@ static void seterr(char *err, size_t errlen, const char *fmt, ...)
 	va_end(ap);
 }
 
+static cJSON *member(cJSON *obj, const char *name)
+{
+	return cJSON_GetObjectItemCaseSensitive(obj, name);
+}
+
+static const char *jstr(cJSON *v)
+{
+	return cJSON_IsString(v) ? v->valuestring : NULL;
+}
+
+static int get_uint(cJSON *v, unsigned max, unsigned *out)
+{
+	double d;
+
+	if (!cJSON_IsNumber(v))
+		return -1;
+	d = v->valuedouble;
+	if (d < 0.0 || d > (double)max || d != (double)(unsigned)d)
+		return -1;
+	*out = (unsigned)d;
+	return 0;
+}
+
 static int parse_key_combo(const char *text, unsigned *usage, unsigned *mod,
 			   char *err, size_t errlen)
 {
@@ -31,7 +56,8 @@ static int parse_key_combo(const char *text, unsigned *usage, unsigned *mod,
 	int value;
 
 	if (!text || !*text || strlen(text) >= sizeof buf) {
-		seterr(err, errlen, "empty or overlong key \"%s\"", text ? text : "");
+		seterr(err, errlen, "empty or overlong key \"%s\"",
+		       text ? text : "");
 		return -1;
 	}
 	strcpy(buf, text);
@@ -61,7 +87,6 @@ static int parse_key_combo(const char *text, unsigned *usage, unsigned *mod,
 static int parse_plain_key(const char *text, unsigned *usage, char *err,
 			   size_t errlen)
 {
-	unsigned mod;
 	int value;
 
 	if (!text || !*text || strchr(text, '+')) {
@@ -74,13 +99,12 @@ static int parse_plain_key(const char *text, unsigned *usage, char *err,
 		seterr(err, errlen, "unknown trigger key \"%s\"", text);
 		return -1;
 	}
-	(void)mod;
 	*usage = (unsigned)value;
 	return 0;
 }
 
-static int parse_action(const char *text, struct remap_binding *b, char *err,
-			size_t errlen)
+static int parse_action(const char *text, struct remap_binding *b,
+			struct arena *arena, char *err, size_t errlen)
 {
 	if (!strcmp(text, "default")) {
 		b->type = NAGA_ASSIGN_DEFAULT;
@@ -88,6 +112,20 @@ static int parse_action(const char *text, struct remap_binding *b, char *err,
 	}
 	if (!strcmp(text, "hypershift")) {
 		b->type = NAGA_ASSIGN_HYPERSHIFT;
+		return 0;
+	}
+	if (!strncmp(text, "macro:", 6)) {
+		const char *name = text + 6;
+
+		if (!*name || strlen(name) >= MAX_MACRO_NAME) {
+			seterr(err, errlen, "bad macro name \"%s\"", name);
+			return -1;
+		}
+		b->macro = arena_strdup(arena, name);
+		if (!b->macro) {
+			seterr(err, errlen, "out of memory");
+			return -1;
+		}
 		return 0;
 	}
 	if (!strncmp(text, "mouse:", 6)) {
@@ -131,48 +169,45 @@ static int parse_action(const char *text, struct remap_binding *b, char *err,
 	return parse_key_combo(text, &b->usage, &b->mod, err, errlen);
 }
 
-static int get_ms(json_t *obj, const char *name, unsigned def, unsigned *out,
+static int get_ms(cJSON *obj, const char *name, unsigned def, unsigned *out,
 		  char *err, size_t errlen)
 {
-	json_t *v = json_object_get(obj, name);
+	cJSON *v = member(obj, name);
 
 	if (!v) {
 		*out = def;
 		return 0;
 	}
-	if (!json_is_integer(v) || json_integer_value(v) < 0 ||
-	    json_integer_value(v) > 60000) {
+	if (get_uint(v, 60000, out) < 0) {
 		seterr(err, errlen, "%s must be an integer 0..60000", name);
 		return -1;
 	}
-	*out = (unsigned)json_integer_value(v);
 	return 0;
 }
 
-static int parse_mods(json_t *obj, unsigned *mod, char *err, size_t errlen)
+static int parse_mods(cJSON *obj, unsigned *mod, char *err, size_t errlen)
 {
-	json_t *v = json_object_get(obj, "mods");
-	size_t i;
-	json_t *item;
+	cJSON *v = member(obj, "mods");
+	cJSON *item;
 
 	*mod = 0;
 	if (!v)
 		return 0;
-	if (!json_is_array(v)) {
+	if (!cJSON_IsArray(v)) {
 		seterr(err, errlen, "\"mods\" must be an array");
 		return -1;
 	}
-	json_array_foreach(v, i, item) {
+	cJSON_ArrayForEach(item, v) {
 		int bits;
 
-		if (!json_is_string(item)) {
+		if (!jstr(item)) {
 			seterr(err, errlen, "\"mods\" entries must be strings");
 			return -1;
 		}
-		bits = naga_parse_mod(json_string_value(item));
+		bits = naga_parse_mod(jstr(item));
 		if (bits < 0) {
 			seterr(err, errlen, "unknown modifier \"%s\"",
-			       json_string_value(item));
+			       jstr(item));
 			return -1;
 		}
 		*mod |= (unsigned)bits;
@@ -199,38 +234,36 @@ static int parse_mouse_action(const char *s, enum remap_mouse_action *out,
 	return -1;
 }
 
-static int parse_step(json_t *obj, struct remap_step *step, char *err,
-		      size_t errlen)
+static int parse_step(cJSON *obj, struct remap_step *step,
+		      struct arena *arena, char *err, size_t errlen)
 {
-	json_t *v;
+	cJSON *v;
 	int actions = 0;
 
-	if (!json_is_object(obj)) {
-		seterr(err, errlen, "sequence steps must be objects");
+	if (!cJSON_IsObject(obj)) {
+		seterr(err, errlen, "macro steps must be objects");
 		return -1;
 	}
 	memset(step, 0, sizeof *step);
 
-	if ((v = json_object_get(obj, "delay"))) {
+	if ((v = member(obj, "delay"))) {
 		actions++;
-		if (!json_is_integer(v) || json_integer_value(v) < 0 ||
-		    json_integer_value(v) > 60000) {
+		if (get_uint(v, 60000, &step->delay_ms) < 0) {
 			seterr(err, errlen, "delay must be 0..60000 ms");
 			return -1;
 		}
 		step->kind = REMAP_STEP_DELAY;
-		step->delay_ms = (unsigned)json_integer_value(v);
 	}
 
-	if ((v = json_object_get(obj, "key"))) {
+	if ((v = member(obj, "key"))) {
 		actions++;
-		if (!json_is_string(v)) {
+		if (!jstr(v)) {
 			seterr(err, errlen, "\"key\" must be a string");
 			return -1;
 		}
 		step->kind = REMAP_STEP_KEY;
-		if (parse_key_combo(json_string_value(v), &step->usage,
-				    &step->mod, err, errlen) < 0)
+		if (parse_key_combo(jstr(v), &step->usage, &step->mod, err,
+				    errlen) < 0)
 			return -1;
 		if (parse_mods(obj, &step->mod, err, errlen) < 0)
 			return -1;
@@ -238,186 +271,344 @@ static int parse_step(json_t *obj, struct remap_step *step, char *err,
 			return -1;
 	}
 
-	if ((v = json_object_get(obj, "text"))) {
+	if ((v = member(obj, "text"))) {
 		actions++;
-		if (!json_is_string(v) || !*json_string_value(v)) {
-			seterr(err, errlen, "\"text\" must be a non-empty string");
+		if (!jstr(v) || !*jstr(v)) {
+			seterr(err, errlen,
+			       "\"text\" must be a non-empty string");
 			return -1;
 		}
-		if (strlen(json_string_value(v)) > MAX_TEXT) {
+		if (strlen(jstr(v)) > MAX_TEXT) {
 			seterr(err, errlen, "text is too long");
 			return -1;
 		}
 		step->kind = REMAP_STEP_TEXT;
-		step->text = strdup(json_string_value(v));
+		step->text = arena_strdup(arena, jstr(v));
 		if (!step->text) {
 			seterr(err, errlen, "out of memory");
 			return -1;
 		}
 		if (get_ms(obj, "hold_ms", 10, &step->hold_ms, err, errlen) < 0)
-			goto fail;
+			return -1;
 		if (get_ms(obj, "delay_ms", 20, &step->delay_ms, err, errlen) < 0)
-			goto fail;
+			return -1;
 	}
 
-	if ((v = json_object_get(obj, "mouse"))) {
+	if ((v = member(obj, "mouse"))) {
 		int button;
 
 		actions++;
-		if (!json_is_string(v)) {
+		if (!jstr(v)) {
 			seterr(err, errlen, "\"mouse\" must be a string");
-			goto fail;
+			return -1;
 		}
-		button = naga_parse_mouse(json_string_value(v));
+		button = naga_parse_mouse(jstr(v));
 		if (button < 0) {
 			seterr(err, errlen, "unknown mouse button \"%s\"",
-			       json_string_value(v));
-			goto fail;
+			       jstr(v));
+			return -1;
 		}
 		step->kind = REMAP_STEP_MOUSE;
 		step->mouse = button;
-		v = json_object_get(obj, "action");
-		if (v && !json_is_string(v)) {
+		v = member(obj, "action");
+		if (v && !jstr(v)) {
 			seterr(err, errlen, "mouse action must be a string");
-			goto fail;
+			return -1;
 		}
-		if (parse_mouse_action(v ? json_string_value(v) : NULL,
-				       &step->mouse_action, err, errlen) < 0)
-			goto fail;
+		if (parse_mouse_action(jstr(v), &step->mouse_action, err,
+				       errlen) < 0)
+			return -1;
 		if (get_ms(obj, "hold_ms", 20, &step->hold_ms, err, errlen) < 0)
-			goto fail;
+			return -1;
 	}
 
 	if (actions != 1) {
 		seterr(err, errlen,
 		       "step needs exactly one of key, text, mouse or delay");
-		goto fail;
+		return -1;
 	}
 	return 0;
-fail:
-	free(step->text);
-	step->text = NULL;
-	return -1;
 }
 
-static int parse_sequence(json_t *arr, struct remap_sequence *seq, char *err,
-			  size_t errlen)
+static int parse_sequence(cJSON *arr, struct remap_sequence *seq,
+			  struct arena *arena, char *err, size_t errlen)
 {
-	size_t i;
-	json_t *item;
+	size_t count;
+	size_t index = 0;
+	cJSON *item;
 
-	if (!json_is_array(arr) || json_array_size(arr) == 0) {
-		seterr(err, errlen, "sequence must be a non-empty array");
+	if (!cJSON_IsArray(arr) || (count = cJSON_GetArraySize(arr)) == 0) {
+		seterr(err, errlen, "macro must be a non-empty array");
 		return -1;
 	}
-	if (json_array_size(arr) > MAX_STEPS) {
-		seterr(err, errlen, "too many sequence steps (max %d)",
-		       MAX_STEPS);
+	if (count > MAX_STEPS) {
+		seterr(err, errlen, "too many macro steps (max %d)", MAX_STEPS);
 		return -1;
 	}
-	seq->steps = calloc(json_array_size(arr), sizeof *seq->steps);
+	seq->steps = arena_alloc(arena, count * sizeof *seq->steps,
+				 _Alignof(struct remap_step));
 	if (!seq->steps) {
 		seterr(err, errlen, "out of memory");
 		return -1;
 	}
-	json_array_foreach(arr, i, item) {
-		if (parse_step(item, &seq->steps[i], err, errlen) < 0) {
-			for (size_t j = 0; j < i; j++)
-				free(seq->steps[j].text);
-			free(seq->steps);
-			seq->steps = NULL;
+	memset(seq->steps, 0, count * sizeof *seq->steps);
+	cJSON_ArrayForEach(item, arr) {
+		if (parse_step(item, &seq->steps[index], arena, err, errlen) < 0)
+			return -1;
+		index++;
+	}
+	seq->count = index;
+	return 0;
+}
+
+static int parse_macros(struct remap_map *map, cJSON *root, char *err,
+			size_t errlen)
+{
+	cJSON *macros = member(root, "macros");
+	cJSON *item;
+	size_t count;
+
+	if (!macros)
+		return 0;
+	if (!cJSON_IsObject(macros)) {
+		seterr(err, errlen, "\"macros\" must be an object");
+		return -1;
+	}
+	count = cJSON_GetArraySize(macros);
+	if (count > MAX_MACROS) {
+		seterr(err, errlen, "too many macros (max %d)", MAX_MACROS);
+		return -1;
+	}
+	map->macros = arena_alloc(&map->arena, count * sizeof *map->macros,
+				  _Alignof(struct remap_macro));
+	if (!map->macros) {
+		seterr(err, errlen, "out of memory");
+		return -1;
+	}
+	memset(map->macros, 0, count * sizeof *map->macros);
+
+	cJSON_ArrayForEach(item, macros) {
+		struct remap_macro *macro = &map->macros[map->macro_count];
+		const char *name = item->string;
+
+		if (!name || !*name || strlen(name) >= MAX_MACRO_NAME) {
+			seterr(err, errlen, "bad macro name");
 			return -1;
 		}
-		seq->count++;
+		for (size_t i = 0; i < map->macro_count; i++) {
+			if (!strcmp(map->macros[i].name, name)) {
+				seterr(err, errlen, "duplicate macro \"%s\"",
+				       name);
+				return -1;
+			}
+		}
+		macro->name = arena_strdup(&map->arena, name);
+		if (!macro->name) {
+			seterr(err, errlen, "out of memory");
+			return -1;
+		}
+		if (parse_sequence(item, &macro->seq, &map->arena, err,
+				   errlen) < 0)
+			return -1;
+		map->macro_count++;
 	}
 	return 0;
 }
 
-static int split_layer(const char *raw, char *id, size_t idlen, int *layer,
-		       char *err, size_t errlen)
+static int parse_binding(const char *raw, cJSON *value, int layer,
+			 struct remap_binding *b, struct arena *arena,
+			 char *err, size_t errlen)
 {
-	const char *at = strchr(raw, '@');
-	size_t n = at ? (size_t)(at - raw) : strlen(raw);
+	const char *text = jstr(value);
 
-	if (n == 0 || n >= idlen) {
-		seterr(err, errlen, "bad binding id \"%s\"", raw);
+	memset(b, 0, sizeof *b);
+	if (!raw || !*raw || strlen(raw) >= sizeof b->id) {
+		seterr(err, errlen, "bad binding id \"%s\"", raw ? raw : "");
 		return -1;
 	}
-	memcpy(id, raw, n);
-	id[n] = '\0';
-	*layer = 0;
-	if (!at)
-		return 0;
-	if (!strcmp(at + 1, "hypershift") || !strcmp(at + 1, "1")) {
-		*layer = 1;
-		return 0;
+	if (strchr(raw, '@')) {
+		seterr(err, errlen,
+		       "binding \"%s\": use bindings.normal/hypershift, "
+		       "not @layer",
+		       raw);
+		return -1;
 	}
-	if (!strcmp(at + 1, "normal") || !strcmp(at + 1, "0"))
-		return 0;
-	seterr(err, errlen, "layer must be normal/hypershift or 0/1");
-	return -1;
+	strcpy(b->id, raw);
+	b->layer = layer;
+
+	if (!text) {
+		seterr(err, errlen,
+		       "binding \"%s\" must be a string; define sequences "
+		       "under \"macros\" and use \"macro:<name>\"",
+		       raw);
+		return -1;
+	}
+	return parse_action(text, b, arena, err, errlen);
 }
 
-static int parse_binding(const char *raw, json_t *value,
-			 struct remap_binding *b, char *err, size_t errlen)
+static int parse_section(struct remap_map *map, cJSON *section, int layer,
+			 char *err, size_t errlen)
 {
-	memset(b, 0, sizeof *b);
-	if (split_layer(raw, b->id, sizeof b->id, &b->layer, err, errlen) < 0)
-		return -1;
+	cJSON *item;
 
-	if (json_is_string(value)) {
-		return parse_action(json_string_value(value), b, err, errlen);
+	if (!section)
+		return 0;
+	cJSON_ArrayForEach(item, section) {
+		if (parse_binding(item->string, item, layer,
+				  &map->bindings[map->count], &map->arena, err,
+				  errlen) < 0)
+			return -1;
+		map->count++;
 	}
-	if (json_is_object(value)) {
-		json_t *seq = json_object_get(value, "sequence");
+	return 0;
+}
 
-		if (!seq) {
+static int parse_bindings(struct remap_map *map, cJSON *root, char *err,
+			  size_t errlen)
+{
+	cJSON *bindings = member(root, "bindings");
+	cJSON *normal;
+	cJSON *hyper;
+	cJSON *item;
+	size_t total;
+
+	if (!cJSON_IsObject(bindings)) {
+		seterr(err, errlen, "\"bindings\" must be an object");
+		return -1;
+	}
+	cJSON_ArrayForEach(item, bindings) {
+		if (strcmp(item->string, "normal") &&
+		    strcmp(item->string, "hypershift")) {
 			seterr(err, errlen,
-			       "binding \"%s\" needs a sequence or a string",
-			       raw);
+			       "bindings must have \"normal\" and/or "
+			       "\"hypershift\"; unknown key \"%s\"",
+			       item->string);
 			return -1;
 		}
-		b->is_sequence = true;
-		return parse_sequence(seq, &b->seq, err, errlen);
 	}
-	seterr(err, errlen, "binding \"%s\" must be a string or object", raw);
-	return -1;
+	normal = member(bindings, "normal");
+	hyper = member(bindings, "hypershift");
+	if ((normal && !cJSON_IsObject(normal)) ||
+	    (hyper && !cJSON_IsObject(hyper))) {
+		seterr(err, errlen, "bindings.normal/hypershift must be objects");
+		return -1;
+	}
+	total = (normal ? (size_t)cJSON_GetArraySize(normal) : 0) +
+		(hyper ? (size_t)cJSON_GetArraySize(hyper) : 0);
+	if (total == 0) {
+		seterr(err, errlen, "no bindings");
+		return -1;
+	}
+	if (total > MAX_BINDINGS) {
+		seterr(err, errlen, "too many bindings (max %d)", MAX_BINDINGS);
+		return -1;
+	}
+	map->bindings = arena_alloc(&map->arena, total * sizeof *map->bindings,
+				    _Alignof(struct remap_binding));
+	if (!map->bindings) {
+		seterr(err, errlen, "out of memory");
+		return -1;
+	}
+	memset(map->bindings, 0, total * sizeof *map->bindings);
+
+	if (parse_section(map, normal, 0, err, errlen) < 0)
+		return -1;
+	return parse_section(map, hyper, 1, err, errlen);
+}
+
+static int parse_triggers(struct remap_map *map, cJSON *root, char *err,
+			  size_t errlen)
+{
+	cJSON *triggers = member(root, "triggers");
+	cJSON *section;
+	cJSON *item;
+	size_t count = 0;
+
+	if (!triggers)
+		return 0;
+	if (!cJSON_IsObject(triggers)) {
+		seterr(err, errlen, "\"triggers\" must be an object");
+		return -1;
+	}
+	cJSON_ArrayForEach(item, triggers) {
+		if (strcmp(item->string, "normal") &&
+		    strcmp(item->string, "hypershift")) {
+			seterr(err, errlen,
+			       "triggers must have \"normal\" and/or "
+			       "\"hypershift\"; unknown key \"%s\"",
+			       item->string);
+			return -1;
+		}
+		if (!cJSON_IsObject(item)) {
+			seterr(err, errlen,
+			       "triggers.normal/hypershift must be objects");
+			return -1;
+		}
+		count += (size_t)cJSON_GetArraySize(item);
+	}
+	if (count > MAX_BINDINGS)
+		count = MAX_BINDINGS;
+	map->triggers = arena_alloc(&map->arena,
+				    (count ? count : 1) * sizeof *map->triggers,
+				    _Alignof(struct remap_trigger));
+	if (!map->triggers) {
+		seterr(err, errlen, "out of memory");
+		return -1;
+	}
+	memset(map->triggers, 0, (count ? count : 1) * sizeof *map->triggers);
+
+	static const char *const names[] = {"normal", "hypershift"};
+	for (int layer = 0; layer < 2; layer++) {
+		section = member(triggers, names[layer]);
+		if (!section)
+			continue;
+		cJSON_ArrayForEach(item, section) {
+			struct remap_trigger *t;
+
+			if (map->trigger_count >= count) {
+				seterr(err, errlen, "too many triggers");
+				return -1;
+			}
+			if (!item->string || strlen(item->string) >=
+						 sizeof map->triggers[0].id ||
+			    !jstr(item) ||
+			    strlen(jstr(item)) >=
+				sizeof map->triggers[0].key) {
+				seterr(err, errlen, "bad trigger");
+				return -1;
+			}
+			t = &map->triggers[map->trigger_count++];
+			strcpy(t->id, item->string);
+			strcpy(t->key, jstr(item));
+			t->layer = layer;
+		}
+	}
+	return 0;
 }
 
 int remap_map_load_string(const char *text, struct remap_map *map, char *err,
 			  size_t errlen)
 {
-	json_error_t jerr;
-	json_t *root = NULL;
-	json_t *bindings = NULL;
-	json_t *triggers = NULL;
-	json_t *v;
-	const char *key;
-	size_t index = 0;
+	cJSON *root;
+	const char *s;
 
 	memset(map, 0, sizeof *map);
 	map->device = REMAP_DEVICE_AUTO;
+	arena_init(&map->arena, 4096);
 
-	root = json_loads(text, 0, &jerr);
+	root = cJSON_ParseWithLength(text, strlen(text));
 	if (!root) {
-		seterr(err, errlen, "JSON: %s (line %d)", jerr.text,
-		       jerr.line);
-		return -1;
-	}
-	if (!json_is_object(root)) {
-		seterr(err, errlen, "top level must be an object");
+		const char *ep = cJSON_GetErrorPtr();
+
+		seterr(err, errlen, "JSON: %s", ep ? ep : "parse error");
 		goto fail;
 	}
+	if (!cJSON_IsObject(root)) {
+		seterr(err, errlen, "top level must be an object");
+		goto fail_root;
+	}
 
-	v = json_object_get(root, "device");
-	if (v) {
-		const char *s;
-
-		if (!json_is_string(v)) {
-			seterr(err, errlen, "\"device\" must be a string");
-			goto fail;
-		}
-		s = json_string_value(v);
+	if ((s = jstr(member(root, "device")))) {
 		if (!strcmp(s, "auto"))
 			map->device = REMAP_DEVICE_AUTO;
 		else if (!strcmp(s, "2020") || !strcmp(s, "naga-2020") ||
@@ -427,66 +618,21 @@ int remap_map_load_string(const char *text, struct remap_map *map, char *err,
 			map->device = REMAP_DEVICE_2014;
 		else {
 			seterr(err, errlen, "unknown device \"%s\"", s);
-			goto fail;
+			goto fail_root;
 		}
 	}
 
-	triggers = json_object_get(root, "triggers");
-	if (triggers) {
-		if (!json_is_object(triggers)) {
-			seterr(err, errlen, "\"triggers\" must be an object");
-			goto fail;
-		}
-		map->triggers = calloc(json_object_size(triggers),
-				       sizeof *map->triggers);
-		if (!map->triggers) {
-			seterr(err, errlen, "out of memory");
-			goto fail;
-		}
-		json_object_foreach(triggers, key, v) {
-			if (!json_is_string(v) ||
-			    strlen(key) >= sizeof map->triggers[0].id ||
-			    strlen(json_string_value(v)) >=
-				    sizeof map->triggers[0].key) {
-				seterr(err, errlen, "bad trigger \"%s\"", key);
-				goto fail;
-			}
-			strcpy(map->triggers[map->trigger_count].id, key);
-			strcpy(map->triggers[map->trigger_count].key,
-			       json_string_value(v));
-			map->trigger_count++;
-		}
-	}
+	if (parse_macros(map, root, err, errlen) < 0 ||
+	    parse_triggers(map, root, err, errlen) < 0 ||
+	    parse_bindings(map, root, err, errlen) < 0)
+		goto fail_root;
 
-	bindings = json_object_get(root, "bindings");
-	if (!json_is_object(bindings) || json_object_size(bindings) == 0) {
-		seterr(err, errlen, "\"bindings\" must be a non-empty object");
-		goto fail;
-	}
-	if (json_object_size(bindings) > MAX_BINDINGS) {
-		seterr(err, errlen, "too many bindings (max %d)", MAX_BINDINGS);
-		goto fail;
-	}
-	map->bindings = calloc(json_object_size(bindings),
-			       sizeof *map->bindings);
-	if (!map->bindings) {
-		seterr(err, errlen, "out of memory");
-		goto fail;
-	}
-	json_object_foreach(bindings, key, v) {
-		/* Count the slot before parsing so a partial binding is freed. */
-		map->count = index + 1;
-		if (parse_binding(key, v, &map->bindings[index], err, errlen) <
-		    0)
-			goto fail;
-		index++;
-	}
-
-	json_decref(root);
+	cJSON_Delete(root);
 	return 0;
+
+fail_root:
+	cJSON_Delete(root);
 fail:
-	if (root)
-		json_decref(root);
 	remap_map_free(map);
 	return -1;
 }
@@ -495,8 +641,10 @@ int remap_map_load(const char *path, struct remap_map *map, char *err,
 		   size_t errlen)
 {
 	FILE *fp;
-	char *text;
 	long size;
+	struct arena file_arena;
+	char *text;
+	int rc;
 
 	fp = fopen(path, "rb");
 	if (!fp) {
@@ -510,39 +658,32 @@ int remap_map_load(const char *path, struct remap_map *map, char *err,
 		return -1;
 	}
 	rewind(fp);
-	text = malloc((size_t)size + 1);
+	arena_init(&file_arena, (size_t)size + 1);
+	text = arena_alloc(&file_arena, (size_t)size + 1, 1);
 	if (!text) {
 		fclose(fp);
+		arena_free(&file_arena);
 		seterr(err, errlen, "out of memory");
 		return -1;
 	}
 	if (fread(text, 1, (size_t)size, fp) != (size_t)size) {
-		free(text);
 		fclose(fp);
+		arena_free(&file_arena);
 		seterr(err, errlen, "%s: read failed", path);
 		return -1;
 	}
 	text[size] = '\0';
 	fclose(fp);
-	if (remap_map_load_string(text, map, err, errlen) < 0) {
-		free(text);
-		return -1;
-	}
-	free(text);
-	return 0;
+	rc = remap_map_load_string(text, map, err, errlen);
+	arena_free(&file_arena);
+	return rc;
 }
 
 void remap_map_free(struct remap_map *map)
 {
 	if (!map)
 		return;
-	for (size_t i = 0; i < map->count; i++) {
-		for (size_t j = 0; j < map->bindings[i].seq.count; j++)
-			free(map->bindings[i].seq.steps[j].text);
-		free(map->bindings[i].seq.steps);
-	}
-	free(map->bindings);
-	free(map->triggers);
+	arena_free(&map->arena);
 	memset(map, 0, sizeof *map);
 }
 
@@ -571,6 +712,25 @@ static int is_thumb(const naga_ctrl *ctrl)
 	return ctrl && ctrl->group == NAGA_GROUP_THUMB;
 }
 
+static const struct remap_macro *find_macro(const struct remap_map *map,
+					     const char *name)
+{
+	for (size_t i = 0; i < map->macro_count; i++)
+		if (!strcmp(map->macros[i].name, name))
+			return &map->macros[i];
+	return NULL;
+}
+
+static struct remap_binding *find_binding(struct remap_map *map,
+					  const char *id, int layer)
+{
+	for (size_t i = 0; i < map->count; i++)
+		if (map->bindings[i].layer == layer &&
+		    !strcmp(map->bindings[i].id, id))
+			return &map->bindings[i];
+	return NULL;
+}
+
 int remap_map_validate(struct remap_map *map, char *err, size_t errlen)
 {
 	if (map->device == REMAP_DEVICE_AUTO) {
@@ -582,9 +742,19 @@ int remap_map_validate(struct remap_map *map, char *err, size_t errlen)
 		struct remap_binding *b = &map->bindings[i];
 		const naga_ctrl *ctrl;
 
-		if (b->id[0] == '\0') {
-			seterr(err, errlen, "empty binding id");
-			return -1;
+		if (b->macro) {
+			const struct remap_macro *macro =
+			    find_macro(map, b->macro);
+
+			if (!macro) {
+				seterr(err, errlen,
+				       "binding \"%s\" references unknown macro "
+				       "\"%s\"",
+				       b->id, b->macro);
+				return -1;
+			}
+			b->seq = &macro->seq;
+			b->is_sequence = true;
 		}
 
 		if (map->device == REMAP_DEVICE_2020) {
@@ -603,7 +773,8 @@ int remap_map_validate(struct remap_map *map, char *err, size_t errlen)
 				if (b->type == NAGA_ASSIGN_TURBO &&
 				    b->layer != 0) {
 					seterr(err, errlen,
-					       "turbo only works on the normal layer");
+					       "turbo only works on the normal "
+					       "layer");
 					return -1;
 				}
 				if (b->type != NAGA_ASSIGN_KEY &&
@@ -626,7 +797,8 @@ int remap_map_validate(struct remap_map *map, char *err, size_t errlen)
 			ctrl = naga_ctrl_by_name(b->id);
 			if (!is_thumb(ctrl)) {
 				seterr(err, errlen,
-				       "the 2014 map only supports thumb ids 1..9,0,-,=");
+				       "the 2014 map only supports thumb ids "
+				       "1..9,0,-,=");
 				return -1;
 			}
 			if (!b->is_sequence &&
@@ -657,13 +829,38 @@ int remap_map_validate(struct remap_map *map, char *err, size_t errlen)
 			}
 		}
 	}
+
+	for (size_t i = 0; i < map->trigger_count; i++) {
+		const struct remap_trigger *t = &map->triggers[i];
+		struct remap_binding *b = find_binding(map, t->id, t->layer);
+
+		if (!b) {
+			seterr(err, errlen,
+			       "trigger for unknown binding \"%s\"@%d", t->id,
+			       t->layer);
+			return -1;
+		}
+		if (map->device == REMAP_DEVICE_2020 && !b->is_sequence) {
+			seterr(err, errlen,
+			       "trigger for \"%s\" needs a macro binding",
+			       t->id);
+			return -1;
+		}
+		if (map->device == REMAP_DEVICE_2014 && t->layer != 0) {
+			seterr(err, errlen,
+			       "the 2014 has no hypershift triggers");
+			return -1;
+		}
+	}
 	return 0;
 }
 
-static const char *find_trigger(const struct remap_map *map, const char *id)
+static const char *find_trigger(const struct remap_map *map, const char *id,
+				int layer)
 {
 	for (size_t i = 0; i < map->trigger_count; i++)
-		if (!strcmp(map->triggers[i].id, id))
+		if (map->triggers[i].layer == layer &&
+		    !strcmp(map->triggers[i].id, id))
 			return map->triggers[i].key;
 	return NULL;
 }
@@ -693,14 +890,15 @@ int remap_map_assign_triggers(struct remap_map *map, char *err, size_t errlen)
 
 	for (size_t i = 0; i < map->count; i++) {
 		struct remap_binding *b = &map->bindings[i];
-		const char *explicit = find_trigger(map, b->id);
+		const char *explicit = find_trigger(map, b->id, b->layer);
 
 		if (map->device == REMAP_DEVICE_2020) {
 			if (!b->is_sequence) {
 				if (explicit) {
 					seterr(err, errlen,
-					       "trigger for \"%s\" is only valid "
-					       "with a sequence", b->id);
+					       "trigger for \"%s\" is only "
+					       "valid with a macro",
+					       b->id);
 					return -1;
 				}
 				b->trigger_usage = 0;
@@ -714,7 +912,7 @@ int remap_map_assign_triggers(struct remap_map *map, char *err, size_t errlen)
 			} else {
 				if (next_fkey > 0x73) {
 					seterr(err, errlen,
-					       "more than 12 sequences need "
+					       "more than 12 macro bindings need "
 					       "explicit triggers (f13..f24)");
 					return -1;
 				}
@@ -767,24 +965,31 @@ int remap_map_assign_triggers(struct remap_map *map, char *err, size_t errlen)
 		}
 	}
 
-	for (size_t i = 0; i < map->trigger_count; i++) {
-		bool found = false;
+	if (map->device == REMAP_DEVICE_2020) {
+		for (size_t i = 0; i < map->count; i++) {
+			const struct remap_binding *b = &map->bindings[i];
 
-		for (size_t j = 0; j < map->count; j++) {
-			if (!strcmp(map->triggers[i].id,
-				    map->bindings[j].id)) {
-				found = true;
-				break;
+			if (b->is_sequence)
+				continue;
+			if (b->type != NAGA_ASSIGN_KEY &&
+			    b->type != NAGA_ASSIGN_TURBO)
+				continue;
+			for (size_t j = 0; j < map->count; j++) {
+				const struct remap_binding *o = &map->bindings[j];
+
+				if (o->is_sequence && o->trigger_usage &&
+				    o->trigger_usage == b->usage) {
+					seterr(err, errlen,
+					       "binding %s%s emits trigger %s; "
+					       "choose another trigger",
+					       b->id,
+					       b->layer ? "@hypershift" : "",
+					       o->trigger);
+					return -1;
+				}
 			}
 		}
-		if (!found) {
-			seterr(err, errlen,
-			       "trigger for unknown binding \"%s\"",
-			       map->triggers[i].id);
-			return -1;
-		}
 	}
-
 	return 0;
 }
 
@@ -819,8 +1024,8 @@ void remap_binding_string(const struct remap_binding *b, char *buf, size_t len)
 
 	if (!len)
 		return;
-	if (b->is_sequence) {
-		snprintf(buf, len, "sequence (%zu steps)", b->seq.count);
+	if (b->macro) {
+		snprintf(buf, len, "macro:%s", b->macro);
 		return;
 	}
 	switch (b->type) {
@@ -877,7 +1082,7 @@ int remap_apply(const struct remap_map *map, bool dry_run, char *err,
 		snprintf(label, sizeof label, "%s%s", b->id,
 			 b->layer ? "@hypershift" : "");
 		if (b->is_sequence) {
-			printf("%s %s -> %s (sequence; needs run)\n",
+			printf("%s %s -> %s (macro; needs run)\n",
 			       dry_run ? "would bind" : "bind", label,
 			       b->trigger);
 			sequences++;
@@ -934,6 +1139,6 @@ int remap_apply(const struct remap_map *map, bool dry_run, char *err,
 		naga_close();
 	printf("%s %zu binding(s)%s\n", dry_run ? "validated" : "applied",
 	       map->count,
-	       sequences ? "; run `naga-remap run` for the sequences" : "");
+	       sequences ? "; run `naga-remap run` for the macros" : "");
 	return 0;
 }

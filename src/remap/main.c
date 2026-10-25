@@ -3,7 +3,7 @@
 #include "remap/plan.h"
 #include "remap/run.h"
 
-#include <jansson.h>
+#include <cJSON.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -159,8 +159,11 @@ static int cmd_dump(const char *output)
 {
 	char err[256] = "";
 	FILE *out = stdout;
-	json_t *root;
-	json_t *bindings;
+	cJSON *root;
+	cJSON *bindings;
+	cJSON *normal;
+	cJSON *hyper;
+	char *text;
 	int rc;
 
 	rc = naga_open();
@@ -169,14 +172,22 @@ static int cmd_dump(const char *output)
 		return fail(err);
 	}
 
-	root = json_object();
-	bindings = json_object();
-	if (!root || !bindings) {
+	root = cJSON_CreateObject();
+	bindings = cJSON_CreateObject();
+	normal = cJSON_CreateObject();
+	hyper = cJSON_CreateObject();
+	if (!root || !bindings || !normal || !hyper) {
+		cJSON_Delete(root);
+		cJSON_Delete(bindings);
+		cJSON_Delete(normal);
+		cJSON_Delete(hyper);
 		naga_close();
-		json_decref(root);
-		json_decref(bindings);
 		return fail("out of memory");
 	}
+	cJSON_AddItemToObject(root, "device", cJSON_CreateString("2020"));
+	cJSON_AddItemToObject(bindings, "normal", normal);
+	cJSON_AddItemToObject(bindings, "hypershift", hyper);
+	cJSON_AddItemToObject(root, "bindings", bindings);
 
 	for (size_t i = 0; i < naga_ctrls_count; i++) {
 		const naga_ctrl *ctrl = &naga_ctrls[i];
@@ -184,8 +195,8 @@ static int cmd_dump(const char *output)
 		for (int layer = 0; layer <= 1; layer++) {
 			naga_rec rec;
 			struct remap_binding b = {0};
-			char id[48];
 			char value[96];
+			cJSON *target = layer ? hyper : normal;
 
 			if (naga_get_rec_layer(ctrl->ctr, (unsigned)layer,
 					       &rec) != NAGA_OK ||
@@ -206,36 +217,34 @@ static int cmd_dump(const char *output)
 			if (rec.type == NAGA_ASSIGN_TURBO && !b.turbo_ms)
 				continue;
 			remap_binding_string(&b, value, sizeof value);
-			snprintf(id, sizeof id, "%s%s", ctrl->name,
-				 layer ? "@hypershift" : "");
-			json_object_set_new(bindings, id, json_string(value));
+			cJSON_AddItemToObject(target, ctrl->name,
+					      cJSON_CreateString(value));
 		}
 	}
-
-	json_object_set_new(root, "device", json_string("2020"));
-	json_object_set_new(root, "bindings", bindings);
 
 	if (output) {
 		out = fopen(output, "w");
 		if (!out) {
-			json_decref(root);
+			cJSON_Delete(root);
 			naga_close();
 			snprintf(err, sizeof err, "%s: cannot open", output);
 			return fail(err);
 		}
 	}
-	if (json_dumpf(root, out, JSON_INDENT(2)) < 0) {
-		snprintf(err, sizeof err, "cannot write JSON");
+	text = cJSON_Print(root);
+	if (!text) {
 		if (out != stdout)
 			fclose(out);
-		json_decref(root);
+		cJSON_Delete(root);
 		naga_close();
-		return fail(err);
+		return fail("cannot write JSON");
 	}
+	fputs(text, out);
 	fputc('\n', out);
+	cJSON_free(text);
 	if (out != stdout)
 		fclose(out);
-	json_decref(root);
+	cJSON_Delete(root);
 	naga_close();
 	return 0;
 }

@@ -1,16 +1,24 @@
 {
   "device": "2020",
   "bindings": {
-    "1": "x",
-    "2": "ctrl+shift+t",
-    "3": "mouse:middle",
-    "4": "hypershift",
-    "5": "turbo:f5@3000",
-    "6": {"sequence": [
+    "normal": {
+      "1": "x",
+      "2": "ctrl+shift+t",
+      "3": "mouse:middle",
+      "4": "hypershift",
+      "5": "turbo:f5@3000",
+      "6": "macro:hello"
+    },
+    "hypershift": {
+      "1": "mouse:back"
+    }
+  },
+  "macros": {
+    "hello": [
       {"key": "a"},
       {"delay": 50},
       {"text": "hello"},
       {"mouse": "left"}
-    ]}
+    ]
   }
 }

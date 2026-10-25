@@ -9,41 +9,51 @@
 
 static int failures;
 
-#define CHECK(cond)                                                     \
-	do {                                                            \
-		if (!(cond)) {                                          \
+#define CHECK(cond)                                                      \
+	do {                                                             \
+		if (!(cond)) {                                           \
 			fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, \
-				#cond);                                 \
-			failures++;                                     \
-		}                                                       \
+				#cond);                                  \
+			failures++;                                      \
+		}                                                        \
 	} while (0)
 
 static const char *map_2020 =
     "{\n"
     "  \"device\": \"2020\",\n"
-    "  \"triggers\": { \"6\": \"f20\" },\n"
     "  \"bindings\": {\n"
-    "    \"1\": \"x\",\n"
-    "    \"2\": \"ctrl+shift+t\",\n"
-    "    \"3\": \"mouse:middle\",\n"
-    "    \"4\": \"hypershift\",\n"
-    "    \"5\": \"turbo:f5@3000\",\n"
-    "    \"6\": {\"sequence\": [\n"
+    "    \"normal\": {\n"
+    "      \"1\": \"x\",\n"
+    "      \"2\": \"ctrl+shift+t\",\n"
+    "      \"3\": \"mouse:middle\",\n"
+    "      \"4\": \"hypershift\",\n"
+    "      \"5\": \"turbo:f5@3000\",\n"
+    "      \"6\": \"macro:hello\"\n"
+    "    },\n"
+    "    \"hypershift\": { \"9\": \"f13\" }\n"
+    "  },\n"
+    "  \"macros\": {\n"
+    "    \"hello\": [\n"
     "      {\"key\": \"a\"},\n"
     "      {\"delay\": 50},\n"
     "      {\"text\": \"Hi\", \"hold_ms\": 10, \"delay_ms\": 20},\n"
     "      {\"mouse\": \"left\"}\n"
-    "    ]},\n"
-    "    \"9@hypershift\": \"f13\"\n"
-    "  }\n"
+    "    ]\n"
+    "  },\n"
+    "  \"triggers\": { \"normal\": { \"6\": \"f20\" } }\n"
     "}\n";
 
 static const char *map_2014 =
     "{\n"
     "  \"device\": \"2014\",\n"
     "  \"bindings\": {\n"
-    "    \"1\": \"x\",\n"
-    "    \"2\": {\"sequence\": [{\"key\": \"ctrl+c\"}, {\"delay\": 10}]}\n"
+    "    \"normal\": {\n"
+    "      \"1\": \"x\",\n"
+    "      \"2\": \"macro:copy_paste\"\n"
+    "    }\n"
+    "  },\n"
+    "  \"macros\": {\n"
+    "    \"copy_paste\": [{\"key\": \"ctrl+c\"}, {\"delay\": 10}]\n"
     "  }\n"
     "}\n";
 
@@ -94,6 +104,7 @@ static void test_2020_parse_and_triggers(void)
 		goto out;
 
 	CHECK(map.count == 7);
+	CHECK(map.macro_count == 1);
 	b = find_binding(&map, "1", 0);
 	CHECK(b && b->type == NAGA_ASSIGN_KEY && b->usage == 0x1B); /* x */
 	b = find_binding(&map, "2", 0);
@@ -105,7 +116,10 @@ static void test_2020_parse_and_triggers(void)
 	b = find_binding(&map, "5", 0);
 	CHECK(b && b->type == NAGA_ASSIGN_TURBO && b->turbo_ms == 3000);
 	b = find_binding(&map, "6", 0);
-	CHECK(b && b->is_sequence && b->trigger_usage == 0x6F); /* f20 */
+	CHECK(b && b->is_sequence && b->macro &&
+	      !strcmp(b->macro, "hello"));
+	CHECK(b && b->seq && b->seq->count == 4);
+	CHECK(b && b->trigger_usage == 0x6F); /* f20 */
 	b = find_binding(&map, "9", 1);
 	CHECK(b && b->type == NAGA_ASSIGN_KEY && b->usage == 0x68); /* f13 */
 
@@ -123,9 +137,11 @@ static void test_2014_defaults(void)
 	if (failures)
 		goto out;
 
+	CHECK(map.count == 2);
 	b = find_binding(&map, "1", 0);
 	CHECK(b && !strcmp(b->trigger, "KEY_KP1"));
 	b = find_binding(&map, "2", 0);
+	CHECK(b && b->is_sequence && b->seq && b->seq->count == 2);
 	CHECK(b && !strcmp(b->trigger, "KEY_KP2"));
 
 out:
@@ -198,6 +214,28 @@ out:
 	remap_map_free(&map);
 }
 
+static void test_default_trigger(void)
+{
+	struct remap_map map;
+	struct remap_binding *b;
+	char err[256] = "";
+
+	load_ok("{\"device\":\"2020\",\"bindings\":{\"normal\":"
+		"{\"1\":\"macro:m\"}},\"macros\":{\"m\":[{\"key\":\"a\"}]}}",
+		&map);
+	map.device = REMAP_DEVICE_2020;
+	if (remap_map_validate(&map, err, sizeof err) < 0 ||
+	    remap_map_assign_triggers(&map, err, sizeof err) < 0) {
+		fprintf(stderr, "default trigger failed: %s\n", err);
+		failures++;
+		goto out;
+	}
+	b = find_binding(&map, "1", 0);
+	CHECK(b && b->trigger_usage == 0x68 && !strcmp(b->trigger, "f13"));
+out:
+	remap_map_free(&map);
+}
+
 static void expect_load_fail(const char *json)
 {
 	struct remap_map map;
@@ -224,42 +262,36 @@ static void expect_validate_fail(const char *json, enum remap_device model)
 	remap_map_free(&map);
 }
 
-static void expect_assign_fail(const char *json, enum remap_device model)
-{
-	struct remap_map map;
-	char err[256] = "";
-
-	load_ok(json, &map);
-	map.device = model;
-	(void)remap_map_validate(&map, err, sizeof err);
-	if (remap_map_assign_triggers(&map, err, sizeof err) == 0) {
-		fprintf(stderr, "unexpectedly assigned triggers: %s\n", json);
-		failures++;
-	}
-	remap_map_free(&map);
-}
-
 static void test_invalid(void)
 {
-	expect_load_fail("{\"bindings\":{\"1\":\"bogus\"}}");
-	expect_load_fail("{\"bindings\":{\"1\":{\"sequence\":[]}}}");
-	expect_load_fail("{\"bindings\":{\"1\":{\"sequence\":[{\"delay\":1,\"key\":\"a\"}]}}}");
-	expect_validate_fail("{\"device\":\"2020\",\"bindings\":{\"99\":\"x\"}}",
+	expect_load_fail("{\"bindings\":{\"normal\":{\"1\":\"bogus\"}}}");
+	expect_load_fail("{\"bindings\":{\"normal\":{\"1\":\"macro:m\"}},"
+			 "\"macros\":{\"m\":[]}}");
+	expect_load_fail("{\"bindings\":{\"normal\":{\"1\":{\"sequence\":"
+			 "[{\"delay\":1}]}}}}");
+	expect_load_fail("{\"bindings\":{\"normal\":{\"1\":\"x\"},"
+			 "\"back\":{\"1\":\"y\"}}}");
+	expect_validate_fail("{\"device\":\"2020\",\"bindings\":{\"normal\":"
+			     "{\"99\":\"x\"}}}",
 			     REMAP_DEVICE_2020);
-	expect_validate_fail(
-	    "{\"device\":\"2014\",\"bindings\":{\"1\":\"hypershift\"}}",
-	    REMAP_DEVICE_2014);
-	expect_validate_fail(
-	    "{\"device\":\"2020\",\"bindings\":{\"1@hypershift\":\"turbo:f5@100\"}}",
-	    REMAP_DEVICE_2020);
-	expect_assign_fail(
-	    "{\"device\":\"2020\",\"bindings\":{\"1\":\"x\",\"2\":\"hypershift\"},"
-	    "\"triggers\":{\"2\":\"f13\"}}",
-	    REMAP_DEVICE_2020);
-	expect_assign_fail(
-	    "{\"device\":\"2020\",\"bindings\":{\"1\":\"x\"},"
-	    "\"triggers\":{\"9\":\"f13\"}}",
-	    REMAP_DEVICE_2020);
+	expect_validate_fail("{\"device\":\"2020\",\"bindings\":{\"normal\":"
+			     "{\"1\":\"macro:missing\"}}}",
+			     REMAP_DEVICE_2020);
+	expect_validate_fail("{\"device\":\"2014\",\"bindings\":{\"normal\":"
+			     "{\"1\":\"x\"},\"hypershift\":{\"1\":\"y\"}}}",
+			     REMAP_DEVICE_2014);
+	expect_validate_fail("{\"device\":\"2020\",\"bindings\":{\"normal\":"
+			     "{\"1\":\"x\"},\"hypershift\":"
+			     "{\"2\":\"turbo:f5@100\"}}}",
+			     REMAP_DEVICE_2020);
+	expect_validate_fail("{\"device\":\"2020\",\"bindings\":{\"normal\":"
+			     "{\"1\":\"x\"}},\"triggers\":{\"normal\":"
+			     "{\"1\":\"f13\"}}}",
+			     REMAP_DEVICE_2020);
+	expect_validate_fail("{\"device\":\"2020\",\"bindings\":{\"normal\":"
+			     "{\"1\":\"x\"}},\"triggers\":{\"normal\":"
+			     "{\"9\":\"f13\"}}}",
+			     REMAP_DEVICE_2020);
 }
 
 static void test_key_mapping(void)
@@ -280,6 +312,7 @@ int main(void)
 	test_2014_defaults();
 	test_sequence_plan();
 	test_single_plan();
+	test_default_trigger();
 	test_invalid();
 	test_key_mapping();
 

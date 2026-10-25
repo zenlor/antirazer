@@ -15,8 +15,10 @@ struct remap_event {
 };
 
 struct remap_plan {
+	struct arena arena;
 	struct remap_event *events;
 	size_t count;
+	size_t capacity;
 	uint32_t duration_ms;
 };
 

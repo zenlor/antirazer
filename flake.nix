@@ -12,7 +12,6 @@
 
     packages = eachSystem (pkgs: {
       default = import ./nix/package.nix pkgs;
-      cimgui = import ./nix/cimgui.nix pkgs;
     });
 
     devShells = eachSystem (pkgs: {

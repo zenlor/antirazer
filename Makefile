@@ -1,15 +1,13 @@
-# antirazer — build naga-mapper (CLI), naga-ui (SDL3 + cimgui) and naga-remap
+# antirazer — build naga-mapper, naga-remap and naga-ui
 #
-#   make              build the CLI and remap tool; GUI when CIMGUI is set
-#   make naga-ui      build the GUI only
-#   make test         run the key/control and remap unit tests
+#   make              build everything
+#   make test         run the unit tests
+#   make tools        build the research tools
 #   make install      install into $(DESTDIR)$(PREFIX)
 #
-# Inside `nix develop` everything is preconfigured. Outside it, point CIMGUI
-# at a cimgui install prefix (a static lib/libcimgui.a plus include/), e.g.
-#   make CIMGUI=/usr/local
+# libusb-1.0, libevdev and SDL3 come from the system (or the Nix dev shell).
+# cJSON and cimgui/ImGui are vendored under vendor/ and built from source.
 
-CIMGUI     ?=
 PREFIX     ?= /usr/local
 UDEVDIR    ?= $(PREFIX)/lib/udev/rules.d
 BUILD      ?= build
@@ -24,32 +22,61 @@ CFLAGS     += -std=c11 -Wall -Wextra -Wpedantic
 CXXFLAGS   ?= -O2 -g
 CXXFLAGS   += -std=c++17 -Wall -Wextra
 
-LIBUSB_CFLAGS := $(shell $(PKG_CONFIG) --cflags libusb-1.0)
-LIBUSB_LIBS   := $(shell $(PKG_CONFIG) --libs libusb-1.0)
+# Third-party code is built without our warning set.
+VENDOR_CFLAGS   := -O2 -g -std=c11
+VENDOR_CXXFLAGS := -O2 -g -std=c++17
 
+LIBUSB_CFLAGS   := $(shell $(PKG_CONFIG) --cflags libusb-1.0)
+LIBUSB_LIBS     := $(shell $(PKG_CONFIG) --libs libusb-1.0)
 LIBEVDEV_CFLAGS := $(shell $(PKG_CONFIG) --cflags libevdev)
 LIBEVDEV_LIBS   := $(shell $(PKG_CONFIG) --libs libevdev)
+SDL3_CFLAGS     := $(shell $(PKG_CONFIG) --cflags sdl3)
+SDL3_LIBS       := $(shell $(PKG_CONFIG) --libs sdl3)
 
-JANSSON_CFLAGS := $(shell $(PKG_CONFIG) --cflags jansson)
-JANSSON_LIBS   := $(shell $(PKG_CONFIG) --libs jansson)
+CJSON_CFLAGS := -Ivendor/cjson
+CJSON_OBJS   := $(BUILD)/cjson.o
 
-ifneq ($(CIMGUI),)
-UI_CPPFLAGS := \
-	-I$(CIMGUI)/include -I$(CIMGUI)/include/imgui \
-	-I$(CIMGUI)/include/imgui/backends \
-	$(shell $(PKG_CONFIG) --cflags sdl3)
-UI_LIBS := $(CIMGUI)/lib/libcimgui.a $(shell $(PKG_CONFIG) --libs sdl3) $(LIBUSB_LIBS)
-endif
+CIMGUI_DIR      := vendor/cimgui
+CIMGUI_CFLAGS   := -I$(CIMGUI_DIR) -I$(CIMGUI_DIR)/imgui \
+                   -I$(CIMGUI_DIR)/imgui/backends $(SDL3_CFLAGS) \
+                   -DCIMGUI_USE_SDL3
+UI_CFLAGS       := -I$(CIMGUI_DIR) -I$(CIMGUI_DIR)/imgui \
+                   -I$(CIMGUI_DIR)/imgui/backends $(SDL3_CFLAGS)
 
-# Device core, shared by both frontends.
+CIMGUI_SRCS := \
+	$(CIMGUI_DIR)/cimgui.cpp \
+	$(CIMGUI_DIR)/imgui/imgui.cpp \
+	$(CIMGUI_DIR)/imgui/imgui_draw.cpp \
+	$(CIMGUI_DIR)/imgui/imgui_tables.cpp \
+	$(CIMGUI_DIR)/imgui/imgui_widgets.cpp \
+	$(CIMGUI_DIR)/imgui/imgui_demo.cpp \
+	$(CIMGUI_DIR)/imgui/backends/imgui_impl_sdl3.cpp \
+	$(CIMGUI_DIR)/imgui/backends/imgui_impl_sdlrenderer3.cpp
+CIMGUI_OBJS := $(patsubst $(CIMGUI_DIR)/%.cpp,$(BUILD)/cimgui/%.o,$(CIMGUI_SRCS))
+
 CORE_OBJS := $(BUILD)/naga.o $(BUILD)/naga_keys.o $(BUILD)/naga_ctrls.o
+
+REMAP_OBJS := $(BUILD)/remap_main.o $(BUILD)/remap_map.o \
+              $(BUILD)/remap_plan.o $(BUILD)/remap_run.o \
+              $(BUILD)/remap_arena.o
 
 TOOLS := naga-probe evtap
 
-all: naga-mapper naga-remap $(if $(CIMGUI),naga-ui)
+all: naga-mapper naga-remap naga-ui
 
 $(BUILD):
 	mkdir -p $(BUILD)
+
+# ---- vendored libraries ---------------------------------------------------
+
+$(BUILD)/cjson.o: vendor/cjson/cJSON.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(VENDOR_CFLAGS) $(CJSON_CFLAGS) -c $< -o $@
+
+$(BUILD)/cimgui/%.o: $(CIMGUI_DIR)/%.cpp | $(BUILD)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CPPFLAGS) $(VENDOR_CXXFLAGS) $(CIMGUI_CFLAGS) -c $< -o $@
+
+# ---- device core ----------------------------------------------------------
 
 $(BUILD)/%.o: src/%.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LIBUSB_CFLAGS) -c $< -o $@
@@ -64,11 +91,11 @@ naga-mapper: $(CORE_OBJS) $(BUILD)/mapper_main.o
 
 # ---- naga-remap -----------------------------------------------------------
 
-REMAP_OBJS := $(BUILD)/remap_main.o $(BUILD)/remap_map.o \
-              $(BUILD)/remap_plan.o $(BUILD)/remap_run.o
+$(BUILD)/remap_arena.o: src/remap/arena.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/remap_map.o: src/remap/map.c | $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(JANSSON_CFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(CJSON_CFLAGS) -c $< -o $@
 
 $(BUILD)/remap_plan.o: src/remap/plan.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
@@ -77,50 +104,42 @@ $(BUILD)/remap_run.o: src/remap/run.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LIBEVDEV_CFLAGS) -c $< -o $@
 
 $(BUILD)/remap_main.o: src/remap/main.c | $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(CJSON_CFLAGS) -c $< -o $@
 
-naga-remap: $(CORE_OBJS) $(REMAP_OBJS)
-	$(CC) $(LDFLAGS) -o $@ $^ $(LIBUSB_LIBS) $(JANSSON_LIBS) $(LIBEVDEV_LIBS)
+naga-remap: $(CORE_OBJS) $(REMAP_OBJS) $(CJSON_OBJS)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LIBUSB_LIBS) $(LIBEVDEV_LIBS) -lm
 
 # ---- GUI ------------------------------------------------------------------
 
-ifneq ($(CIMGUI),)
-
 $(BUILD)/ui_main.o: src/ui/main.c | $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(UI_CPPFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(UI_CFLAGS) -c $< -o $@
 
 $(BUILD)/ui_state.o: src/ui/ui_state.c | $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(UI_CPPFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(UI_CFLAGS) -c $< -o $@
 
 $(BUILD)/ui_layout.o: src/ui/ui_layout.c | $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(UI_CPPFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(UI_CFLAGS) -c $< -o $@
 
 $(BUILD)/ui_keys.o: src/ui/ui_keys.c | $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(UI_CPPFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(UI_CFLAGS) -c $< -o $@
 
 $(BUILD)/cbridge.o: src/ui/cbridge.cpp | $(BUILD)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(UI_CPPFLAGS) -c $< -o $@
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(UI_CFLAGS) -c $< -o $@
 
 naga-ui: $(CORE_OBJS) $(BUILD)/ui_main.o $(BUILD)/ui_state.o \
-         $(BUILD)/ui_layout.o $(BUILD)/ui_keys.o $(BUILD)/cbridge.o
-	$(CXX) $(LDFLAGS) -o $@ $^ $(UI_LIBS)
-
-else
-
-naga-ui:
-	@echo "naga-ui: CIMGUI is not set." >&2
-	@echo "  run inside 'nix develop', or pass CIMGUI=<cimgui prefix>." >&2
-	@exit 1
-
-endif
+         $(BUILD)/ui_layout.o $(BUILD)/ui_keys.o $(BUILD)/cbridge.o \
+         $(CIMGUI_OBJS)
+	$(CXX) $(LDFLAGS) -o $@ $^ $(SDL3_LIBS) $(LIBUSB_LIBS) -lm -lpthread
 
 # ---- tests ----------------------------------------------------------------
 
 $(BUILD)/test_keys: tests/test_keys.c $(BUILD)/naga_keys.o $(BUILD)/naga_ctrls.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^
 
-$(BUILD)/test_remap: tests/test_remap.c $(BUILD)/remap_map.o $(BUILD)/remap_plan.o $(CORE_OBJS)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LIBUSB_LIBS) $(JANSSON_LIBS)
+$(BUILD)/test_remap: tests/test_remap.c $(BUILD)/remap_map.o \
+                     $(BUILD)/remap_plan.o $(BUILD)/remap_arena.o \
+                     $(CJSON_OBJS) $(CORE_OBJS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LIBUSB_LIBS) -lm
 
 test: $(BUILD)/test_keys $(BUILD)/test_remap
 	./$(BUILD)/test_keys
@@ -138,11 +157,11 @@ evtap: tools/evtap.c
 
 # ---- install --------------------------------------------------------------
 
-install: naga-mapper naga-remap $(if $(CIMGUI),naga-ui)
+install: naga-mapper naga-remap naga-ui
 	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(UDEVDIR)
 	install -m755 naga-mapper $(DESTDIR)$(PREFIX)/bin/
 	install -m755 naga-remap $(DESTDIR)$(PREFIX)/bin/
-	$(if $(CIMGUI),install -m755 naga-ui $(DESTDIR)$(PREFIX)/bin/)
+	install -m755 naga-ui $(DESTDIR)$(PREFIX)/bin/
 	install -m644 udev/99-naga.rules $(DESTDIR)$(UDEVDIR)/99-naga.rules
 
 clean:
