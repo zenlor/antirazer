@@ -2,7 +2,13 @@
 /build/
 /naga-mapper
 /naga-ui
+/naga-probe
+/evtap
 *.o
+
+# python bytecode
+__pycache__/
+*.pyc
 
 # nix
 /result

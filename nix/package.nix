@@ -11,6 +11,7 @@ let
       ../Makefile
       ../src
       ../tests
+      ../tools
       ../udev
     ];
   };

@@ -38,6 +38,8 @@ endif
 # Device core, shared by both frontends.
 CORE_OBJS := $(BUILD)/naga.o $(BUILD)/naga_keys.o $(BUILD)/naga_ctrls.o
 
+TOOLS := naga-probe evtap
+
 all: naga-mapper $(if $(CIMGUI),naga-ui)
 
 $(BUILD):
@@ -91,6 +93,16 @@ $(BUILD)/test_keys: tests/test_keys.c $(BUILD)/naga_keys.o $(BUILD)/naga_ctrls.o
 test: $(BUILD)/test_keys
 	./$(BUILD)/test_keys
 
+# ---- research tools -------------------------------------------------------
+
+tools: $(TOOLS)
+
+naga-probe: tools/naga-probe.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LIBUSB_CFLAGS) -o $@ $< $(LIBUSB_LIBS)
+
+evtap: tools/evtap.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $<
+
 # ---- install --------------------------------------------------------------
 
 install: naga-mapper $(if $(CIMGUI),naga-ui)
@@ -100,6 +112,6 @@ install: naga-mapper $(if $(CIMGUI),naga-ui)
 	install -m644 udev/99-naga.rules $(DESTDIR)$(UDEVDIR)/99-naga.rules
 
 clean:
-	rm -rf $(BUILD) naga-mapper naga-ui
+	rm -rf $(BUILD) naga-mapper naga-ui $(TOOLS)
 
-.PHONY: all clean install test naga-ui
+.PHONY: all clean install test tools naga-ui
