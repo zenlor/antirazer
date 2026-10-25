@@ -51,12 +51,16 @@ extern void naga_impl_sdlrenderer3_shutdown(void);
 
 static bool create_video(SDL_Window **window, SDL_Renderer **renderer)
 {
+	SDL_SetHint(SDL_HINT_RENDER_VSYNC, "1");
 	*window =
 	    SDL_CreateWindow(WINDOW_TITLE, WINDOW_W, WINDOW_H, SDL_WINDOW_RESIZABLE);
 	if (*window)
 		*renderer = SDL_CreateRenderer(*window, NULL);
-	if (*window && *renderer)
+	if (*window && *renderer) {
+		/* Not all drivers support it; the frame limiter is the fallback. */
+		SDL_SetRenderVSync(*renderer, 1);
 		return true;
+	}
 
 	/*
 	 * Some Wayland sessions cannot give us a renderer. Retry on X11 before
@@ -76,8 +80,10 @@ static bool create_video(SDL_Window **window, SDL_Renderer **renderer)
 					   SDL_WINDOW_RESIZABLE);
 		if (*window)
 			*renderer = SDL_CreateRenderer(*window, NULL);
-		if (*window && *renderer)
+		if (*window && *renderer) {
+			SDL_SetRenderVSync(*renderer, 1);
 			return true;
+		}
 	}
 
 	SDL_DestroyRenderer(*renderer);
@@ -103,6 +109,21 @@ static bool save_screenshot(SDL_Renderer *renderer, const char *path)
 	return ok;
 }
 
+/*
+ * Cap event-driven redraws at ~60 Hz. With a working vsync this returns
+ * immediately; it exists for drivers that cannot vsync.
+ */
+static void frame_limit(Uint64 *last)
+{
+	const Uint64 target_ms = 16;
+	Uint64 now = SDL_GetTicks();
+	Uint64 elapsed = now - *last;
+
+	if (elapsed < target_ms)
+		SDL_Delay((Uint32)(target_ms - elapsed));
+	*last = SDL_GetTicks();
+}
+
 int main(int argc, char **argv)
 {
 	const char *screenshot = NULL;
@@ -112,6 +133,7 @@ int main(int argc, char **argv)
 	ImGuiStyle *style;
 	bool running = true;
 	int frames = 0;
+	Uint64 last_frame = 0;
 
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) {
@@ -156,39 +178,49 @@ int main(int argc, char **argv)
 
 	while (running) {
 		SDL_Event event;
+		bool had_event =
+		    SDL_WaitEventTimeout(&event, screenshot ? 0 : 500);
 
-		while (SDL_PollEvent(&event)) {
-			if (event.type == SDL_EVENT_KEYMAP_CHANGED) {
-				ui_keys_rebuild();
-			} else if (state.recording_key) {
-				unsigned usage = 0;
-				unsigned mod = 0;
-				enum ui_key_capture captured =
-				    ui_keys_capture(&event, &usage, &mod);
+		if (had_event) {
+			do {
+				if (event.type == SDL_EVENT_KEYMAP_CHANGED) {
+					ui_keys_rebuild();
+				} else if (state.recording_key) {
+					unsigned usage = 0;
+					unsigned mod = 0;
+					enum ui_key_capture captured =
+					    ui_keys_capture(&event, &usage, &mod);
 
-				if (captured == UI_KEY_CAPTURE_KEY) {
-					ui_state_set_key(&state, usage, mod);
-					ui_state_set_status(&state, false,
-							    "recorded %s", state.key);
-					continue; /* do not type it into the UI too */
+					if (captured == UI_KEY_CAPTURE_KEY) {
+						ui_state_set_key(&state, usage,
+								 mod);
+						ui_state_set_status(
+						    &state, false, "recorded %s",
+						    state.key);
+						continue; /* not into the UI too */
+					}
+					if (captured == UI_KEY_CAPTURE_CANCEL) {
+						ui_state_cancel_key_record(&state);
+						continue;
+					}
+					if (captured == UI_KEY_CAPTURE_MOUSE) {
+						ui_state_set_mouse(&state,
+								   (int)usage);
+						ui_state_set_status(
+						    &state, false,
+						    "recorded mouse %s",
+						    naga_mouse_name((int)usage));
+						continue;
+					}
 				}
-				if (captured == UI_KEY_CAPTURE_CANCEL) {
-					ui_state_cancel_key_record(&state);
-					continue;
-				}
-				if (captured == UI_KEY_CAPTURE_MOUSE) {
-					ui_state_set_mouse(&state, (int)usage);
-					ui_state_set_status(
-					    &state, false, "recorded mouse %s",
-					    naga_mouse_name((int)usage));
-					continue;
-				}
-			}
 
-			naga_impl_sdl3_processevent(&event);
-			if (event.type == SDL_EVENT_QUIT)
-				running = false;
+				naga_impl_sdl3_processevent(&event);
+				if (event.type == SDL_EVENT_QUIT)
+					running = false;
+			} while (SDL_PollEvent(&event));
 		}
+		if (!running)
+			break;
 
 		naga_impl_sdl3_newframe();
 		naga_impl_sdlrenderer3_newframe();
@@ -203,6 +235,7 @@ int main(int argc, char **argv)
 			save_screenshot(renderer, screenshot);
 			running = false;
 		}
+		frame_limit(&last_frame);
 	}
 
 	naga_close();
