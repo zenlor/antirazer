@@ -23,7 +23,7 @@ pkgs.stdenv.mkDerivation (finalAttrs: {
   inherit src;
 
   nativeBuildInputs = [ pkgs.pkg-config ];
-  buildInputs = [ pkgs.libusb1 pkgs.sdl3 ];
+  buildInputs = [ pkgs.libusb1 pkgs.libevdev pkgs.jansson pkgs.sdl3 ];
 
   env.CIMGUI = "${cimgui}";
 
@@ -47,7 +47,7 @@ pkgs.stdenv.mkDerivation (finalAttrs: {
   '';
 
   meta = {
-    description = "Linux configuration tool for the Razer Naga Left-Handed Edition 2020";
+    description = "Linux configuration and remapping tools for the Razer Naga Left-Handed Edition 2020";
     homepage = "https://git.sr.ht/~zenlor/antirazer";
     license = with pkgs.lib.licenses; [ gpl2Plus bsd2 ];
     mainProgram = "naga-mapper";

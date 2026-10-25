@@ -9,6 +9,8 @@ pkgs.mkShell {
     gnumake
     pkg-config
     libusb1
+    libevdev
+    jansson
     sdl3
     gdb
     usbutils # lsusb / usbhid-dump while poking at the device

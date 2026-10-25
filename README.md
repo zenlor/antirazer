@@ -7,12 +7,13 @@ It remaps the twelve thumb buttons — and reads the rest of the mouse — strai
 from the device firmware. No Razer Synapse, no Windows VM, no replug: changes
 are written to the mouse's flash and applied immediately.
 
-Two frontends share one device core:
+The mapping tools share one device core:
 
 | | |
 |---|---|
 | `naga-mapper` | scriptable command-line tool |
 | `naga-ui` | small SDL3 + cimgui window with a clickable drawing of the mouse |
+| `naga-remap` | apply a JSON map; run sequences/macros host-side |
 
 ## Status
 
@@ -26,7 +27,9 @@ Two frontends share one device core:
 | DPI set | implemented (`04/05`), not verified on hardware yet |
 | hypershift layer | switch action decoded (type `0B`, inferred) and implemented; hold-vs-toggle behaviour unverified |
 | main buttons, wheel, DPI keys | default actions decoded; writing new actions to them untested (wheel up/down are not assignable) |
-| profiles, macros, lighting | not decoded — macros are host-side by design (use evdev/uinput) |
+| file-driven remapping | `naga-remap`: JSON map, onboard apply for the 2020, host-side run for both |
+| sequences / macros | host-side via `naga-remap run`; the firmware stores single actions only |
+| profiles, lighting | not decoded |
 
 Everything below that touches the device is the mapping domain (`02/0C` write,
 `02/8C` read, `00/B3` commit); no other command is ever sent.
@@ -36,20 +39,21 @@ Everything below that touches the device is the mapping domain (`02/0C` write,
 ### Nix
 
 ```sh
-nix build                # -> result/bin/naga-mapper, result/bin/naga-ui
+nix build                # -> result/bin/naga-mapper, naga-ui, naga-remap
 nix profile install .    # or: nix profile install git+https://git.sr.ht/~zenlor/antirazer
 ```
 
 ### From source
 
 ```sh
-nix develop -c make      # toolchain, libusb, SDL3 and cimgui from the flake
+nix develop -c make      # toolchain, libusb, libevdev, jansson, SDL3, cimgui
 sudo make install        # PREFIX=/usr/local by default
 ```
 
-Outside Nix you need `libusb-1.0`, `SDL3` (for the GUI) and `cimgui` built as a
-static library; pass its prefix with `make CIMGUI=/path/to/cimgui`. The exact
-cimgui revision is pinned in `nix/cimgui.nix`.
+Outside Nix you need `libusb-1.0`, `libevdev` and `jansson` (remap tool),
+`SDL3` (for the GUI) and `cimgui` built as a static library; pass its prefix
+with `make CIMGUI=/path/to/cimgui`. The exact cimgui revision is pinned in
+`nix/cimgui.nix`.
 
 ### Device permissions
 
@@ -124,6 +128,22 @@ turbo fields are disabled; the layer selector still applies.
 
 `naga-ui --screenshot shot.bmp` renders the window, saves a screenshot and
 exits — handy for smoke tests on headless machines.
+
+## Remapping from a file
+
+`naga-remap` applies a JSON map and runs sequences host-side:
+
+```sh
+naga-remap validate examples/naga-2020.json
+naga-remap apply examples/naga-2020.json     # 2020: onboard single actions
+naga-remap run examples/naga-2020.json       # apply + run sequences
+naga-remap run examples/naga-2014.json --model 2014
+```
+
+The file is an `id -> content` object, with string actions or `sequence`
+objects. See [docs/remap.md](docs/remap.md) for ids, actions, sequence steps
+and trigger assignment. `run` needs root (or access to `/dev/uinput` and the
+event node); Ctrl-C restores the grabbed device.
 
 ## How it works
 
@@ -228,9 +248,11 @@ src/naga.c        USB transport, request encoding, mapping/DPI writes
 src/naga_keys.c   HID usage <-> name, modifier parsing, binding rendering
 src/naga_ctrls.c  the control table (names, ctr values, groups)
 src/mapper/       naga-mapper CLI
+src/remap/        naga-remap: JSON map, event planner, libevdev/uinput runner
 src/ui/           naga-ui: ui_state.c (logic), ui_layout.c (ImGui),
                   ui_keys.c (layout-aware key names and capture), main.c (SDL3)
-tests/            unit tests for the pure key/control code
+tests/            unit tests for the key/control and remap code
+examples/         example naga-remap JSON maps
 tools/            research: naga-probe, evtap, captures/ analysis, vm/ harness
 docs/             protocol reference, research log, VM capture guide
 nix/              cimgui derivation, package, dev shell
@@ -239,8 +261,8 @@ udev/             device permission rule
 
 ```sh
 nix develop          # toolchain + dependencies
-make                 # naga-mapper and naga-ui
-make test            # key parsing / naming / control-table tests
+make                 # naga-mapper, naga-remap and naga-ui
+make test            # key/control and remap tests
 make tools           # research utilities: naga-probe, evtap
 make install         # PREFIX=... UDEVDIR=...
 ```

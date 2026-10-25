@@ -146,13 +146,15 @@ int naga_commit(void)
 	return transact(req, resp);
 }
 
-int naga_get_rec(unsigned ctr, naga_rec *out)
+int naga_get_rec_layer(unsigned ctr, unsigned layer, naga_rec *out)
 {
 	unsigned char req[NAGA_REPORT_LEN] = {0};
 	unsigned char resp[NAGA_REPORT_LEN];
 	int rc;
 
 	if (!out)
+		return NAGA_ERR_INVALID;
+	if (layer > 0xFF)
 		return NAGA_ERR_INVALID;
 	memset(out, 0, sizeof *out);
 
@@ -161,7 +163,7 @@ int naga_get_rec(unsigned ctr, naga_rec *out)
 	req[7] = 0x8C; /* read record */
 	req[8] = 0x01;
 	req[9] = (unsigned char)ctr;
-	req[10] = 0x00;
+	req[10] = (unsigned char)layer;
 	req[11] = 0x02; /* input class: side buttons */
 
 	rc = transact(req, resp);
@@ -179,6 +181,11 @@ int naga_get_rec(unsigned ctr, naga_rec *out)
 	out->usage = resp[14];
 	out->rate = (uint16_t)resp[15] << 8 | resp[16];
 	return NAGA_OK;
+}
+
+int naga_get_rec(unsigned ctr, naga_rec *out)
+{
+	return naga_get_rec_layer(ctr, 0, out);
 }
 
 /*
@@ -238,6 +245,13 @@ int naga_set_hypershift(unsigned ctr, unsigned layer)
 	const unsigned char data[1] = {0x01};
 
 	return write_record(ctr, layer, NAGA_ASSIGN_HYPERSHIFT, data, sizeof data);
+}
+
+int naga_set_default(unsigned ctr, unsigned layer)
+{
+	const unsigned char none[1] = {0};
+
+	return write_record(ctr, layer, NAGA_ASSIGN_DEFAULT, none, 0);
 }
 
 int naga_set_turbo(unsigned ctr, unsigned usage, unsigned mod, unsigned delay_ms)

@@ -2,6 +2,7 @@
 /build/
 /naga-mapper
 /naga-ui
+/naga-remap
 /naga-probe
 /evtap
 *.o
@@ -16,3 +17,8 @@ __pycache__/
 
 # runtime artifacts
 /imgui.ini
+
+# artifacts from other feature branches
+/naga-wheel-filter
+/wheel.*.log
+/probe*.out

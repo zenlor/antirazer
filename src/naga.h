@@ -102,6 +102,9 @@ bool naga_is_open(void);
  */
 int naga_get_rec(unsigned ctr, naga_rec *out);
 
+/* Layer-aware variant: layer 0 normal, 1 hypershift. */
+int naga_get_rec_layer(unsigned ctr, unsigned layer, naga_rec *out);
+
 /* Write + commit a keyboard assignment in <layer>. */
 int naga_set_key(unsigned ctr, unsigned usage, unsigned mod, unsigned layer);
 
@@ -113,6 +116,9 @@ int naga_set_mouse(unsigned ctr, unsigned button, unsigned layer);
 
 /* Write + commit the Hypershift layer-switch action for <ctr>. */
 int naga_set_hypershift(unsigned ctr, unsigned layer);
+
+/* Write + commit the device-default action for <ctr> in <layer>. */
+int naga_set_default(unsigned ctr, unsigned layer);
 
 /* Write + commit a DPI value in counts per inch. */
 int naga_set_dpi(unsigned x, unsigned y);

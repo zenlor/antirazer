@@ -1,0 +1,12 @@
+{
+  "device": "2014",
+  "bindings": {
+    "1": "x",
+    "2": "mouse:middle",
+    "3": {"sequence": [
+      {"key": "ctrl+c"},
+      {"delay": 100},
+      {"key": "ctrl+v"}
+    ]}
+  }
+}

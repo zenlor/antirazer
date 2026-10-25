@@ -1,0 +1,16 @@
+{
+  "device": "2020",
+  "bindings": {
+    "1": "x",
+    "2": "ctrl+shift+t",
+    "3": "mouse:middle",
+    "4": "hypershift",
+    "5": "turbo:f5@3000",
+    "6": {"sequence": [
+      {"key": "a"},
+      {"delay": 50},
+      {"text": "hello"},
+      {"mouse": "left"}
+    ]}
+  }
+}

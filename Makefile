@@ -1,8 +1,8 @@
-# antirazer — build naga-mapper (CLI) and naga-ui (SDL3 + cimgui)
+# antirazer — build naga-mapper (CLI), naga-ui (SDL3 + cimgui) and naga-remap
 #
-#   make              build the CLI; also the GUI when CIMGUI is set
+#   make              build the CLI and remap tool; GUI when CIMGUI is set
 #   make naga-ui      build the GUI only
-#   make test         run the key-parsing unit tests
+#   make test         run the key/control and remap unit tests
 #   make install      install into $(DESTDIR)$(PREFIX)
 #
 # Inside `nix develop` everything is preconfigured. Outside it, point CIMGUI
@@ -27,6 +27,12 @@ CXXFLAGS   += -std=c++17 -Wall -Wextra
 LIBUSB_CFLAGS := $(shell $(PKG_CONFIG) --cflags libusb-1.0)
 LIBUSB_LIBS   := $(shell $(PKG_CONFIG) --libs libusb-1.0)
 
+LIBEVDEV_CFLAGS := $(shell $(PKG_CONFIG) --cflags libevdev)
+LIBEVDEV_LIBS   := $(shell $(PKG_CONFIG) --libs libevdev)
+
+JANSSON_CFLAGS := $(shell $(PKG_CONFIG) --cflags jansson)
+JANSSON_LIBS   := $(shell $(PKG_CONFIG) --libs jansson)
+
 ifneq ($(CIMGUI),)
 UI_CPPFLAGS := \
 	-I$(CIMGUI)/include -I$(CIMGUI)/include/imgui \
@@ -40,7 +46,7 @@ CORE_OBJS := $(BUILD)/naga.o $(BUILD)/naga_keys.o $(BUILD)/naga_ctrls.o
 
 TOOLS := naga-probe evtap
 
-all: naga-mapper $(if $(CIMGUI),naga-ui)
+all: naga-mapper naga-remap $(if $(CIMGUI),naga-ui)
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -55,6 +61,26 @@ $(BUILD)/mapper_main.o: src/mapper/main.c | $(BUILD)
 
 naga-mapper: $(CORE_OBJS) $(BUILD)/mapper_main.o
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBUSB_LIBS)
+
+# ---- naga-remap -----------------------------------------------------------
+
+REMAP_OBJS := $(BUILD)/remap_main.o $(BUILD)/remap_map.o \
+              $(BUILD)/remap_plan.o $(BUILD)/remap_run.o
+
+$(BUILD)/remap_map.o: src/remap/map.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(JANSSON_CFLAGS) -c $< -o $@
+
+$(BUILD)/remap_plan.o: src/remap/plan.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/remap_run.o: src/remap/run.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LIBEVDEV_CFLAGS) -c $< -o $@
+
+$(BUILD)/remap_main.o: src/remap/main.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+naga-remap: $(CORE_OBJS) $(REMAP_OBJS)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LIBUSB_LIBS) $(JANSSON_LIBS) $(LIBEVDEV_LIBS)
 
 # ---- GUI ------------------------------------------------------------------
 
@@ -93,8 +119,12 @@ endif
 $(BUILD)/test_keys: tests/test_keys.c $(BUILD)/naga_keys.o $(BUILD)/naga_ctrls.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^
 
-test: $(BUILD)/test_keys
+$(BUILD)/test_remap: tests/test_remap.c $(BUILD)/remap_map.o $(BUILD)/remap_plan.o $(CORE_OBJS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LIBUSB_LIBS) $(JANSSON_LIBS)
+
+test: $(BUILD)/test_keys $(BUILD)/test_remap
 	./$(BUILD)/test_keys
+	./$(BUILD)/test_remap
 
 # ---- research tools -------------------------------------------------------
 
@@ -108,13 +138,14 @@ evtap: tools/evtap.c
 
 # ---- install --------------------------------------------------------------
 
-install: naga-mapper $(if $(CIMGUI),naga-ui)
+install: naga-mapper naga-remap $(if $(CIMGUI),naga-ui)
 	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(UDEVDIR)
 	install -m755 naga-mapper $(DESTDIR)$(PREFIX)/bin/
+	install -m755 naga-remap $(DESTDIR)$(PREFIX)/bin/
 	$(if $(CIMGUI),install -m755 naga-ui $(DESTDIR)$(PREFIX)/bin/)
 	install -m644 udev/99-naga.rules $(DESTDIR)$(UDEVDIR)/99-naga.rules
 
 clean:
-	rm -rf $(BUILD) naga-mapper naga-ui $(TOOLS)
+	rm -rf $(BUILD) naga-mapper naga-ui naga-remap $(TOOLS)
 
 .PHONY: all clean install test tools naga-ui
