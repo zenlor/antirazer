@@ -51,6 +51,9 @@ extern void naga_impl_sdlrenderer3_shutdown(void);
 
 static bool create_video(SDL_Window **window, SDL_Renderer **renderer)
 {
+	char err[256] = "";
+	const char *driver;
+
 	SDL_SetHint(SDL_HINT_RENDER_VSYNC, "1");
 	*window =
 	    SDL_CreateWindow(WINDOW_TITLE, WINDOW_W, WINDOW_H, SDL_WINDOW_RESIZABLE);
@@ -61,21 +64,37 @@ static bool create_video(SDL_Window **window, SDL_Renderer **renderer)
 		SDL_SetRenderVSync(*renderer, 1);
 		return true;
 	}
+	snprintf(err, sizeof err, "%s", SDL_GetError());
+
+	/* Some sessions expose only the software renderer. */
+	if (*window && !*renderer) {
+		SDL_ClearError();
+		*renderer = SDL_CreateRenderer(*window, "software");
+		if (*renderer) {
+			SDL_SetRenderVSync(*renderer, 1);
+			return true;
+		}
+	}
 
 	/*
-	 * Some Wayland sessions cannot give us a renderer. Retry on X11 before
-	 * giving up, unless the user picked a driver explicitly.
+	 * Some Wayland sessions cannot give us a renderer. Retry on X11
+	 * (usually XWayland) before giving up, unless the user picked a driver
+	 * explicitly.
 	 */
 	if (!getenv("SDL_VIDEODRIVER")) {
 		SDL_SetEnvironmentVariable(SDL_GetEnvironment(), "SDL_VIDEODRIVER",
 					   "x11", 1);
-		SDL_DestroyRenderer(*renderer);
-		SDL_DestroyWindow(*window);
-		SDL_QuitSubSystem(SDL_INIT_VIDEO);
+		if (*renderer)
+			SDL_DestroyRenderer(*renderer);
+		if (*window)
+			SDL_DestroyWindow(*window);
 		*window = NULL;
 		*renderer = NULL;
-		if (!SDL_Init(SDL_INIT_VIDEO))
-			return false;
+		SDL_QuitSubSystem(SDL_INIT_VIDEO);
+		if (!SDL_Init(SDL_INIT_VIDEO)) {
+			snprintf(err, sizeof err, "%s", SDL_GetError());
+			goto fail;
+		}
 		*window = SDL_CreateWindow(WINDOW_TITLE, WINDOW_W, WINDOW_H,
 					   SDL_WINDOW_RESIZABLE);
 		if (*window)
@@ -84,12 +103,18 @@ static bool create_video(SDL_Window **window, SDL_Renderer **renderer)
 			SDL_SetRenderVSync(*renderer, 1);
 			return true;
 		}
+		snprintf(err, sizeof err, "%s", SDL_GetError());
 	}
 
-	SDL_DestroyRenderer(*renderer);
-	SDL_DestroyWindow(*window);
+fail:
+	driver = SDL_GetCurrentVideoDriver();
+	if (*renderer)
+		SDL_DestroyRenderer(*renderer);
+	if (*window)
+		SDL_DestroyWindow(*window);
 	*window = NULL;
 	*renderer = NULL;
+	fprintf(stderr, "SDL video (%s): %s\n", driver ? driver : "?", err);
 	return false;
 }
 
@@ -153,7 +178,6 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	if (!create_video(&window, &renderer)) {
-		fprintf(stderr, "SDL video: %s\n", SDL_GetError());
 		SDL_Quit();
 		return 1;
 	}

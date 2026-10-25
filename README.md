@@ -138,6 +138,13 @@ turbo fields are disabled; the layer selector still applies.
 `naga-ui --screenshot shot.bmp` renders the window, saves a screenshot and
 exits — handy for smoke tests on headless machines.
 
+The GUI uses SDL3, which supports both Wayland and X11. SDL selects the
+session's driver automatically; set `SDL_VIDEODRIVER=wayland` to require
+native Wayland or `SDL_VIDEODRIVER=x11` for X11/XWayland. If the default
+renderer cannot be created, `naga-ui` tries the software renderer and then
+XWayland (unless a driver was forced). `SDL_RENDER_DRIVER` can pick a specific
+renderer for unusual sessions.
+
 ## Remapping from a file
 
 `naga-remap` applies a JSON map and runs host-side bindings:
