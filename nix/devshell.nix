@@ -12,6 +12,7 @@ pkgs.mkShell {
     sdl3
     gdb
     usbutils # lsusb / usbhid-dump while poking at the device
+    wireshark-cli # tshark: live usbmon capture + tools/captures analysis
     clang-tools # clang-format
     nixpkgs-fmt
   ];

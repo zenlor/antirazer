@@ -1,7 +1,9 @@
 # captures — capture and analyse USB traffic
 
-Requires `tshark` (with USB support) and Python 3.9+. Capturing from usbmon
-needs root or the right capabilities; reading a capture usually needs the same.
+Requires `tshark` (with USB support) and Python 3.9+. The dev shell provides
+both, so run the scripts inside it (`nix develop -c python3 ...`). Capturing
+from usbmon needs root or the right capabilities; reading a capture usually
+needs the same.
 
 Two environment variables make the scripts reusable across machines:
 

@@ -23,8 +23,10 @@ channels.
 ./tools/vm/run-windows-vm.sh                          # later runs: installed system
 ```
 
-Connect a SPICE client to `spice://127.0.0.1:5900` (for example
-`remote-viewer`). Then install Windows and Synapse in the guest as usual.
+The script keeps its state in `$NAGA_VM_DIR` (`~/.local/share/antirazer/vm` by
+default); point it at an existing VM directory to reuse one. Connect a SPICE
+client to `spice://127.0.0.1:5900` (for example `remote-viewer`). Then install
+Windows and Synapse in the guest as usual.
 
 Two details cost hours during development and are baked into the script:
 
