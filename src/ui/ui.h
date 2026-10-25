@@ -39,6 +39,18 @@ struct ui_host_binding {
 	bool set;
 };
 
+/* One queued edit, applied only when the user presses "Apply all". */
+struct ui_pending {
+	bool dirty;
+	enum ui_action action;
+	int mouse_button;
+	unsigned usage;
+	unsigned mod;
+	bool turbo;
+	float turbo_ms;
+	int layer;
+};
+
 typedef struct {
 	/* device */
 	bool connected;
@@ -63,6 +75,9 @@ typedef struct {
 	/* wheel-up/down: host-side, exported to the daemon config */
 	struct ui_host_binding host[UI_HOST_COUNT];
 
+	/* queued edits, one per control */
+	struct ui_pending pending[UI_MAX_CTRLS];
+
 	/* device DPI */
 	int dpi_x;
 	int dpi_y;
@@ -85,6 +100,21 @@ void ui_state_select(ui_state *s, int index);
 
 /* Write the editor fields to the selected control and commit. */
 void ui_state_apply(ui_state *s);
+
+/* Queue the editor fields for the selected control, without touching the mouse. */
+void ui_state_stage(ui_state *s);
+
+/* Write every queued edit, then refresh the daemon config if wheel changed. */
+void ui_state_apply_all(ui_state *s);
+
+/* Drop one/all queued edits. */
+void ui_state_discard_selected(ui_state *s);
+void ui_state_discard_all(ui_state *s);
+
+int ui_state_pending_count(const ui_state *s);
+bool ui_state_pending_at(const ui_state *s, int index);
+void ui_state_pending_string_at(const ui_state *s, int index, char *buf,
+				size_t len);
 
 /* Re-read the selected record and reload the editor fields. */
 void ui_state_refresh_selected(ui_state *s);

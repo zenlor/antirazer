@@ -144,9 +144,14 @@ $(BUILD)/test_remap: tests/test_remap.c $(BUILD)/remap_map.o \
                      $(CJSON_OBJS) $(CORE_OBJS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LIBUSB_LIBS) -lm
 
-test: $(BUILD)/test_keys $(BUILD)/test_remap
+$(BUILD)/test_ui_queue: tests/test_ui_queue.c $(BUILD)/ui_state.o \
+                        $(BUILD)/remap_config.o $(CORE_OBJS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LIBUSB_LIBS)
+
+test: $(BUILD)/test_keys $(BUILD)/test_remap $(BUILD)/test_ui_queue
 	./$(BUILD)/test_keys
 	./$(BUILD)/test_remap
+	./$(BUILD)/test_ui_queue
 
 # ---- research tools -------------------------------------------------------
 

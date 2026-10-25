@@ -46,6 +46,7 @@ static ImU32 rgba(int r, int g, int b, int a)
 #define COL_EDGE rgba(88, 94, 108, 255)
 #define COL_BODY rgba(38, 41, 48, 255)
 #define COL_HINT rgba(66, 72, 84, 255)
+#define COL_PENDING rgba(232, 184, 74, 255)
 
 /* ---- device drawing ----------------------------------------------------- */
 
@@ -104,6 +105,7 @@ static void draw_region(ui_state *s, ImDrawList *dl, const canvas *c,
 	ImVec2 end = V(p.x + size.x, p.y + size.y);
 	ImVec2 center = V(p.x + size.x / 2.0f, p.y + size.y / 2.0f);
 	bool selected = s->selected == index;
+	bool pending = ui_state_pending_at(s, index);
 	bool hovered;
 	ImU32 bg;
 
@@ -116,8 +118,15 @@ static void draw_region(ui_state *s, ImDrawList *dl, const canvas *c,
 
 	bg = selected ? COL_SELECTED : hovered ? COL_HOVER : COL_CELL;
 	ImDrawList_AddRectFilled(dl, p, end, bg, rounding * c->scale, 0);
-	ImDrawList_AddRect(dl, p, end, selected ? COL_SELECTED_EDGE : COL_EDGE,
+	ImDrawList_AddRect(dl, p, end,
+			   selected ? COL_SELECTED_EDGE :
+			   pending ? COL_PENDING :
+				     COL_EDGE,
 			   rounding * c->scale, 1.0f, 0);
+	if (pending)
+		ImDrawList_AddCircleFilled(
+		    dl, V(end.x - 5.0f * c->scale, p.y + 5.0f * c->scale),
+		    3.0f * c->scale, COL_PENDING, 0);
 
 	text_centered(dl, V(center.x, center.y - (show_binding ? 7.0f : 0.0f)),
 		      COL_TEXT, label);
@@ -252,6 +261,12 @@ static void draw_toolbar(ui_state *s)
 		igTextColored(V4(0.55f, 0.85f, 0.55f, 1.0f), "device ready");
 	else
 		igTextColored(V4(0.95f, 0.62f, 0.42f, 1.0f), "no device");
+
+	if (ui_state_pending_count(s)) {
+		igSameLine(0.0f, 14.0f);
+		igTextColored(V4(0.95f, 0.78f, 0.42f, 1.0f), "%d staged",
+			      ui_state_pending_count(s));
+	}
 
 	igSameLine(0.0f, 18.0f);
 	igTextDisabled("Razer Naga Left-Handed Edition 2020 (1532:008d)");
@@ -456,6 +471,15 @@ static void draw_editor(ui_state *s)
 		ui_state_binding_string_at(s, s->selected, binding,
 					   sizeof binding);
 		igText("current: %s", binding);
+		if (ui_state_pending_at(s, s->selected)) {
+			char staged[64];
+
+			ui_state_pending_string_at(s, s->selected, staged,
+						   sizeof staged);
+			igSameLine(0.0f, 12.0f);
+			igTextColored(V4(0.95f, 0.78f, 0.42f, 1.0f),
+				      "staged: %s", staged);
+		}
 
 		igBeginDisabled(!s->connected && !ctrl->host_only);
 		igSpacing();
@@ -489,7 +513,7 @@ static void draw_editor(ui_state *s)
 			"##key", "x / f5 / enter / 1a", s->key, sizeof s->key,
 			ImGuiInputTextFlags_EnterReturnsTrue, NULL, NULL) &&
 		    ui_state_can_apply(s))
-			ui_state_apply(s);
+			ui_state_stage(s);
 		igSameLine(0.0f, 12.0f);
 		igTextDisabled("type a name or a hex HID usage");
 
@@ -520,21 +544,39 @@ static void draw_editor(ui_state *s)
 		}
 
 		igSpacing();
-		igBeginDisabled(!ui_state_can_apply(s));
-		if (igButton(ctrl->host_only ? "Save for daemon" :
-						   "Write + commit",
-			     V(150.0f, 0.0f)))
-			ui_state_apply(s);
-		igEndDisabled();
-		igSameLine(0.0f, 10.0f);
-		if (igButton("Re-read", V(90.0f, 0.0f)))
-			ui_state_refresh_selected(s);
-		if (ctrl->host_only)
-			igTextWrapped("Saved in the daemon config; use Write "
-				      "daemon config below.");
+		{
+			int pending = ui_state_pending_count(s);
+			char apply_label[32];
+
+			snprintf(apply_label, sizeof apply_label,
+				 pending ? "Apply all (%d)" : "Apply all",
+				 pending);
+			igBeginDisabled(!ui_state_can_apply(s));
+			if (igButton("Stage change", V(130.0f, 0.0f)))
+				ui_state_stage(s);
+			igEndDisabled();
+			igSameLine(0.0f, 8.0f);
+			igBeginDisabled(pending == 0);
+			if (igButton(apply_label, V(140.0f, 0.0f)))
+				ui_state_apply_all(s);
+			igEndDisabled();
+			igSameLine(0.0f, 8.0f);
+			igBeginDisabled(pending == 0);
+			if (igButton("Discard all", V(110.0f, 0.0f)))
+				ui_state_discard_all(s);
+			igEndDisabled();
+			igSameLine(0.0f, 8.0f);
+			if (igButton("Re-read", V(90.0f, 0.0f)))
+				ui_state_refresh_selected(s);
+		}
+		if (ui_state_pending_count(s))
+			igTextWrapped("%d staged change(s). Apply all writes the "
+				      "mouse bindings together and refreshes the "
+				      "daemon config for wheel changes.",
+				      ui_state_pending_count(s));
 		else
-			igTextWrapped("Writes are stored in the mouse and take "
-				      "effect immediately.");
+			igTextWrapped("Stage edits, then Apply all to write "
+				      "them in one block.");
 		igEndDisabled();
 	}
 

@@ -124,6 +124,32 @@ static void json_kv(FILE *fp, bool *first, const char *id, const char *value)
 	*first = false;
 }
 
+static void load_pending_editor(ui_state *s, int index,
+				const struct ui_pending *p)
+{
+	s->action = p->action;
+	s->mouse_button = p->mouse_button;
+	s->key[0] = '\0';
+	if (p->action == UI_ACTION_KEY) {
+		const char *key = naga_keyname((int)p->usage);
+
+		if (key)
+			snprintf(s->key, sizeof s->key, "%s", key);
+		else
+			snprintf(s->key, sizeof s->key, "%02x", p->usage);
+	}
+	s->mod_ctrl = (p->mod & 0x01) != 0;
+	s->mod_shift = (p->mod & 0x02) != 0;
+	s->mod_alt = (p->mod & 0x04) != 0;
+	s->mod_super = (p->mod & 0x08) != 0;
+	s->turbo = p->turbo;
+	s->turbo_ms = p->turbo_ms;
+	s->layer = p->layer;
+	s->recording_key = false;
+	s->key_filter[0] = '\0';
+	(void)index;
+}
+
 void ui_state_init(ui_state *s)
 {
 	memset(s, 0, sizeof *s);
@@ -260,6 +286,11 @@ void ui_state_select(ui_state *s, int index)
 	s->recording_key = false;
 	ctrl = &naga_ctrls[index];
 
+	if (s->pending[index].dirty) {
+		load_pending_editor(s, index, &s->pending[index]);
+		return;
+	}
+
 	if (ctrl->host_only) {
 		int hi = host_index(ctrl);
 		const struct ui_host_binding *h = &s->host[hi];
@@ -328,6 +359,7 @@ void ui_state_refresh_selected(ui_state *s)
 		ui_state_set_status(s, true, "select a control first");
 		return;
 	}
+	s->pending[s->selected].dirty = false;
 	if (ctrl->host_only) {
 		ui_state_select(s, s->selected);
 		ui_state_set_status(s, false, "%s: host binding reloaded",
@@ -600,4 +632,210 @@ void ui_state_export_config(ui_state *s)
 		ui_state_set_status(s, false, "wrote %s; daemon reloaded", path);
 	else
 		ui_state_set_status(s, false, "wrote %s; %s", path, err);
+}
+
+int ui_state_pending_count(const ui_state *s)
+{
+	size_t limit = naga_ctrls_count < UI_MAX_CTRLS ? naga_ctrls_count :
+							UI_MAX_CTRLS;
+	int count = 0;
+
+	for (size_t i = 0; i < limit; i++)
+		if (s->pending[i].dirty)
+			count++;
+	return count;
+}
+
+bool ui_state_pending_at(const ui_state *s, int index)
+{
+	if (index < 0 || (size_t)index >= naga_ctrls_count ||
+	    (size_t)index >= UI_MAX_CTRLS)
+		return false;
+	return s->pending[index].dirty;
+}
+
+void ui_state_pending_string_at(const ui_state *s, int index, char *buf,
+				size_t len)
+{
+	const struct ui_pending *p;
+
+	if (!len)
+		return;
+	buf[0] = '\0';
+	if (!ui_state_pending_at(s, index))
+		return;
+	p = &s->pending[index];
+
+	if (p->action == UI_ACTION_MOUSE) {
+		const char *name = naga_mouse_name(p->mouse_button);
+
+		snprintf(buf, len, "mouse:%s", name ? name : "?");
+	} else if (p->action == UI_ACTION_HYPERSHIFT) {
+		snprintf(buf, len, "hypershift");
+	} else {
+		char combo[64];
+
+		key_string(p->mod, p->usage, combo, sizeof combo);
+		if (p->turbo)
+			snprintf(buf, len, "turbo:%s@%u", combo,
+				 (unsigned)p->turbo_ms);
+		else
+			snprintf(buf, len, "%s", combo);
+	}
+}
+
+void ui_state_stage(ui_state *s)
+{
+	const naga_ctrl *ctrl = ui_state_selected(s);
+	struct ui_pending np;
+	int usage;
+	unsigned mod;
+
+	if (!ctrl) {
+		ui_state_set_status(s, true, "select a control first");
+		return;
+	}
+	if (s->selected < 0 || (size_t)s->selected >= UI_MAX_CTRLS) {
+		ui_state_set_status(s, true, "selection out of range");
+		return;
+	}
+
+	memset(&np, 0, sizeof np);
+	np.action = s->action;
+	np.mouse_button = s->mouse_button;
+	np.turbo_ms = s->turbo_ms;
+	np.layer = ctrl->host_only ? 0 : s->layer;
+
+	if (s->action == UI_ACTION_HYPERSHIFT) {
+		if (ctrl->host_only) {
+			ui_state_set_status(
+			    s, true,
+			    "wheel up/down support a key or mouse button");
+			return;
+		}
+	} else if (s->action == UI_ACTION_KEY) {
+		usage = naga_parse_usage(s->key);
+		if (usage < 0) {
+			ui_state_set_status(s, true, "unknown key \"%s\"",
+					    s->key);
+			return;
+		}
+		mod = (s->mod_ctrl ? 0x01 : 0) | (s->mod_shift ? 0x02 : 0) |
+		      (s->mod_alt ? 0x04 : 0) | (s->mod_super ? 0x08 : 0);
+		np.usage = (unsigned)usage;
+		np.mod = mod;
+		if (!ctrl->host_only && s->turbo) {
+			np.turbo = true;
+			np.layer = 0; /* turbo is always written normally */
+		}
+	}
+	np.dirty = true;
+	s->pending[s->selected] = np;
+
+	ui_state_set_status(s, false, "%s staged; %d change(s) queued",
+			    ctrl->name, ui_state_pending_count(s));
+}
+
+void ui_state_apply_all(ui_state *s)
+{
+	size_t applied = 0;
+	bool host_changed = false;
+	size_t limit = naga_ctrls_count < UI_MAX_CTRLS ? naga_ctrls_count :
+							UI_MAX_CTRLS;
+
+	if (ui_state_pending_count(s) == 0) {
+		ui_state_set_status(s, false, "nothing staged");
+		return;
+	}
+	if (!s->connected) {
+		ui_state_set_status(
+		    s, true, "connect first: staged changes need the mouse");
+		return;
+	}
+
+	for (size_t i = 0; i < limit; i++) {
+		const naga_ctrl *ctrl = &naga_ctrls[i];
+		struct ui_pending *p = &s->pending[i];
+		int rc = NAGA_OK;
+
+		if (!p->dirty)
+			continue;
+		if (ctrl->host_only) {
+			int hi = host_index(ctrl);
+			struct ui_host_binding *h = &s->host[hi];
+
+			h->action = p->action;
+			h->usage = p->usage;
+			h->mod = p->mod;
+			h->mouse = p->mouse_button;
+			h->set = true;
+			p->dirty = false;
+			host_changed = true;
+			applied++;
+			continue;
+		}
+
+		switch (p->action) {
+		case UI_ACTION_MOUSE:
+			rc = naga_set_mouse(ctrl->ctr, (unsigned)p->mouse_button,
+					    (unsigned)p->layer);
+			break;
+		case UI_ACTION_HYPERSHIFT:
+			rc = naga_set_hypershift(ctrl->ctr,
+						 (unsigned)p->layer);
+			break;
+		case UI_ACTION_KEY:
+		default:
+			if (p->turbo)
+				rc = naga_set_turbo(ctrl->ctr, p->usage,
+						    p->mod,
+						    (unsigned)p->turbo_ms);
+			else
+				rc = naga_set_key(ctrl->ctr, p->usage, p->mod,
+						  (unsigned)p->layer);
+			break;
+		}
+		if (rc != NAGA_OK) {
+			ui_state_set_status(s, true, "%s: write failed: %s",
+					    ctrl->name, naga_strerror(rc));
+			return;
+		}
+		p->dirty = false;
+		s->rec_ok[i] = naga_get_rec(ctrl->ctr, &s->recs[i]) == NAGA_OK;
+		applied++;
+	}
+
+	if (s->selected >= 0)
+		ui_state_select(s, s->selected);
+
+	if (host_changed) {
+		/* Export reads the records again, writes the JSON and signals. */
+		ui_state_export_config(s);
+	} else {
+		ui_state_set_status(s, false, "applied %zu queued change(s)",
+				    applied);
+	}
+}
+
+void ui_state_discard_selected(ui_state *s)
+{
+	if (s->selected < 0 || (size_t)s->selected >= UI_MAX_CTRLS ||
+	    !s->pending[s->selected].dirty) {
+		ui_state_set_status(s, false, "no staged change here");
+		return;
+	}
+	s->pending[s->selected].dirty = false;
+	ui_state_select(s, s->selected);
+	ui_state_set_status(s, false, "staged change discarded");
+}
+
+void ui_state_discard_all(ui_state *s)
+{
+	int count = ui_state_pending_count(s);
+
+	for (size_t i = 0; i < UI_MAX_CTRLS; i++)
+		s->pending[i].dirty = false;
+	if (s->selected >= 0)
+		ui_state_select(s, s->selected);
+	ui_state_set_status(s, false, "discarded %d staged change(s)", count);
 }

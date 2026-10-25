@@ -180,17 +180,21 @@ forwarded through the uinput copy.
 
 ## Exporting from the GUI
 
-The UI has the wheel up/down controls back as host-side controls. Select one,
-choose a key or mouse button and press **Save for daemon**. The **Write
-daemon config + reload** button then:
+The UI has the wheel up/down controls back as host-side controls. Select a
+control, edit its binding and press **Stage change**; the edit is queued (the
+control gets a yellow marker) and you can move on to the next one. **Apply
+all (N)** then writes every staged onboard change in one block. If any wheel
+binding was staged, it also:
 
 1. reads the current normal and Hypershift records from the mouse,
 2. writes them plus the wheel bindings to the daemon config,
 3. sends `SIGHUP` to the PID from the PID file.
 
 If the daemon is not running, the config is still written and the status line
-says so. DPI keys can be remapped from the same editor; they are written
-onboard like the other buttons.
+says so. **Discard all** clears the queue, and **Re-read** drops the selected
+staged edit. The **Write daemon config + reload** button remains available
+for an explicit export. DPI keys can be remapped from the same editor; they
+are written onboard like the other buttons.
 
 ## Requirements and limits
 

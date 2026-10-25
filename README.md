@@ -110,10 +110,15 @@ control is clickable and its current binding is drawn on it (hover for a
 tooltip). Wheel up/down are shown as host-side controls and are saved in the
 daemon config rather than the mouse's flash. The right column edits the
 selected control: its binding (keyboard key, mouse button or Hypershift
-switch), modifiers, layer, turbo with delay, then **Write + commit** (or
-**Save for daemon** for the wheel). DPI and the **Write daemon config +
-reload** button sit below the drawing. The status line reports each device
-operation.
+switch), modifiers, layer and turbo delay, then **Stage change**.
+
+Edits are queued per control: staged controls get a yellow border and dot,
+and selecting another control keeps the queued edit. **Apply all (N)** writes
+all staged onboard changes in one block and refreshes the daemon config when
+wheel bindings changed. **Discard all** clears the queue; **Re-read** drops
+the selected staged edit. Pressing Enter in the raw usage field also stages
+the edit. DPI applies immediately, and the **Write daemon config + reload**
+button can still be used explicitly. The status line reports each operation.
 
 The binding field has three ways in:
 
