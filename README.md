@@ -145,6 +145,13 @@ renderer cannot be created, `naga-ui` tries the software renderer and then
 XWayland (unless a driver was forced). `SDL_RENDER_DRIVER` can pick a specific
 renderer for unusual sessions.
 
+On NixOS, native Wayland also needs access to `/dev/dri/card*` (usually the
+`video` group) and a working EGL or Vulkan driver. If your user is not in
+that group, SDL reports `Couldn't find matching render driver` even though
+the Wayland socket exists. Add the user (`sudo usermod -aG video "$USER"`),
+log out and back in, and retry; the X11/XWayland fallback remains usable
+without that access.
+
 ## Remapping from a file
 
 `naga-remap` applies a JSON map and runs host-side bindings:
