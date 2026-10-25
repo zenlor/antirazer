@@ -2,7 +2,7 @@
 /*
  * ui_state.c — device and editor state for naga-ui.
  *
- * Everything here is free of SDL and ImGui so the behaviour can be reasoned
+ * Everything here is free of GLFW and ImGui so the behaviour can be reasoned
  * about (and tested) without a window. Only the functions in naga.c talk to
  * the mouse.
  */

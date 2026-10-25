@@ -1,7 +1,7 @@
 {
   description = "antirazer — Linux configuration tool for the Razer Naga Left-Handed Edition 2020";
 
-  inputs.nixpkgs.url = "nixpkgs/nixos-26.05";
+  inputs.nixpkgs.url = "nixpkgs/nixos-unstable";
 
   outputs = { self, nixpkgs }: let
     systems = [ "x86_64-linux" "aarch64-linux" ];

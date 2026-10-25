@@ -5,9 +5,9 @@
  * The UI is split into three modules:
  *   ui_state.c   device/editor state and every action that touches the device
  *   ui_layout.c  all widget and ImGui drawing code
- *   main.c       SDL3 window, renderer and frame loop
+ *   main.c       GLFW window, OpenGL3 renderer and frame loop
  *
- * ui_state contains no ImGui or SDL types so the device logic stays testable
+ * ui_state contains no ImGui or GLFW types so the device logic stays testable
  * and independent of the rendering path.
  */
 #ifndef ANTIRAZER_UI_H

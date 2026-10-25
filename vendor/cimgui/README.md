@@ -5,9 +5,14 @@ Vendored from https://github.com/cimgui/cimgui at commit
 with its `imgui` submodule.
 
 Only the files needed by antirazer are kept: the cimgui C wrapper, the ImGui
-core, and the SDL3/SDLRenderer3 backends. Generated docs, examples and tests
+core, and the GLFW + OpenGL3 backends. Generated docs, examples and tests
 were removed. Upstream licenses are in `LICENSE` (cimgui) and
 `LICENSE.imgui` (Dear ImGui), both MIT.
 
 The build compiles `cimgui.cpp`, the ImGui core and the two backends; the
 generated `cimgui_impl.cpp` is not used (see `src/ui/cbridge.cpp`).
+
+The OpenGL3 backend's bundled GL loader is patched to fetch function pointers
+with `glfwGetProcAddress` instead of `dlopen("libGL")`. On NixOS the GL
+libraries are not on the default dlopen path in every environment, while GLFW
+already has a valid context.

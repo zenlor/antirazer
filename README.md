@@ -12,7 +12,7 @@ The mapping tools share one device core:
 | | |
 |---|---|
 | `naga-mapper` | scriptable command-line tool |
-| `naga-ui` | small SDL3 + cimgui window with a clickable drawing, host-side wheel controls and daemon config export |
+| `naga-ui` | small GLFW + OpenGL3 + cimgui window with a clickable drawing, host-side wheel controls and daemon config export |
 | `naga-remap` | JSON maps, onboard apply, host-side macros and a reloadable daemon |
 
 ## Status
@@ -48,11 +48,11 @@ nix profile install .    # or: nix profile install git+https://git.sr.ht/~zenlor
 ### From source
 
 ```sh
-nix develop -c make      # toolchain, libusb, libevdev, SDL3; cJSON/cimgui vendored
+nix develop -c make      # toolchain, libusb, libevdev, GLFW/OpenGL; cJSON/cimgui vendored
 sudo make install        # PREFIX=/usr/local by default
 ```
 
-Outside Nix you need `libusb-1.0`, `libevdev` and `SDL3`. cJSON and
+Outside Nix you need `libusb-1.0`, `libevdev` and `GLFW` with OpenGL support. cJSON and
 cimgui/ImGui are vendored under `vendor/` and built from source, so there is
 no extra prefix to point at.
 
@@ -138,19 +138,16 @@ turbo fields are disabled; the layer selector still applies.
 `naga-ui --screenshot shot.bmp` renders the window, saves a screenshot and
 exits — handy for smoke tests on headless machines.
 
-The GUI uses SDL3, which supports both Wayland and X11. SDL selects the
-session's driver automatically; set `SDL_VIDEODRIVER=wayland` to require
-native Wayland or `SDL_VIDEODRIVER=x11` for X11/XWayland. If the default
-renderer cannot be created, `naga-ui` tries the software renderer and then
-XWayland (unless a driver was forced). `SDL_RENDER_DRIVER` can pick a specific
-renderer for unusual sessions.
+The GUI uses GLFW + OpenGL3, which supports both Wayland and X11. GLFW selects
+the session's backend automatically (Wayland when available) and sets the
+Wayland app id; no X11 wrapper is needed. The ImGui OpenGL3 backend is wired
+to GLFW for its function pointers.
 
 On NixOS, native Wayland also needs access to `/dev/dri/card*` (usually the
-`video` group) and a working EGL or Vulkan driver. If your user is not in
-that group, SDL reports `Couldn't find matching render driver` even though
-the Wayland socket exists. Add the user (`sudo usermod -aG video "$USER"`),
-log out and back in, and retry; the X11/XWayland fallback remains usable
-without that access.
+`video` group) and a working EGL driver. If your user is not in that group,
+GLFW reports `EGL: Failed to get EGL display`; add the user
+(`sudo usermod -aG video "$USER"`), log out and back in, and retry. X11/XWayland
+remains usable without that access.
 
 ## Remapping from a file
 
@@ -276,7 +273,7 @@ src/mapper/       naga-mapper CLI
 src/remap/        naga-remap: JSON map, planner, config/PID, libevdev/uinput
                   runner and daemon
 src/ui/           naga-ui: ui_state.c (logic), ui_layout.c (ImGui),
-                  ui_keys.c (layout-aware key names and capture), main.c (SDL3)
+                  ui_keys.c (layout-aware key names and capture), main.c (GLFW/OpenGL3)
 tests/            unit tests for the key/control and remap code
 examples/         example naga-remap JSON maps
 tools/            research: naga-probe, evtap, captures/ analysis, vm/ harness

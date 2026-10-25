@@ -5,7 +5,7 @@
 #   make tools        build the research tools
 #   make install      install into $(DESTDIR)$(PREFIX)
 #
-# libusb-1.0, libevdev and SDL3 come from the system (or the Nix dev shell).
+# libusb-1.0, libevdev and GLFW come from the system (or the Nix dev shell).
 # cJSON and cimgui/ImGui are vendored under vendor/ and built from source.
 
 PREFIX     ?= /usr/local
@@ -30,18 +30,19 @@ LIBUSB_CFLAGS   := $(shell $(PKG_CONFIG) --cflags libusb-1.0)
 LIBUSB_LIBS     := $(shell $(PKG_CONFIG) --libs libusb-1.0)
 LIBEVDEV_CFLAGS := $(shell $(PKG_CONFIG) --cflags libevdev)
 LIBEVDEV_LIBS   := $(shell $(PKG_CONFIG) --libs libevdev)
-SDL3_CFLAGS     := $(shell $(PKG_CONFIG) --cflags sdl3)
-SDL3_LIBS       := $(shell $(PKG_CONFIG) --libs sdl3)
+GLFW_CFLAGS     := $(shell $(PKG_CONFIG) --cflags glfw3)
+GLFW_LIBS       := $(shell $(PKG_CONFIG) --libs glfw3)
 
 CJSON_CFLAGS := -Ivendor/cjson
 CJSON_OBJS   := $(BUILD)/cjson.o
 
 CIMGUI_DIR      := vendor/cimgui
 CIMGUI_CFLAGS   := -I$(CIMGUI_DIR) -I$(CIMGUI_DIR)/imgui \
-                   -I$(CIMGUI_DIR)/imgui/backends $(SDL3_CFLAGS) \
-                   -DCIMGUI_USE_SDL3
+                   -I$(CIMGUI_DIR)/imgui/backends $(GLFW_CFLAGS) \
+                   -DGLFW_INCLUDE_NONE
 UI_CFLAGS       := -I$(CIMGUI_DIR) -I$(CIMGUI_DIR)/imgui \
-                   -I$(CIMGUI_DIR)/imgui/backends $(SDL3_CFLAGS)
+                   -I$(CIMGUI_DIR)/imgui/backends $(GLFW_CFLAGS) \
+                   -DGLFW_INCLUDE_NONE
 
 CIMGUI_SRCS := \
 	$(CIMGUI_DIR)/cimgui.cpp \
@@ -50,8 +51,8 @@ CIMGUI_SRCS := \
 	$(CIMGUI_DIR)/imgui/imgui_tables.cpp \
 	$(CIMGUI_DIR)/imgui/imgui_widgets.cpp \
 	$(CIMGUI_DIR)/imgui/imgui_demo.cpp \
-	$(CIMGUI_DIR)/imgui/backends/imgui_impl_sdl3.cpp \
-	$(CIMGUI_DIR)/imgui/backends/imgui_impl_sdlrenderer3.cpp
+	$(CIMGUI_DIR)/imgui/backends/imgui_impl_glfw.cpp \
+	$(CIMGUI_DIR)/imgui/backends/imgui_impl_opengl3.cpp
 CIMGUI_OBJS := $(patsubst $(CIMGUI_DIR)/%.cpp,$(BUILD)/cimgui/%.o,$(CIMGUI_SRCS))
 
 CORE_OBJS := $(BUILD)/naga.o $(BUILD)/naga_keys.o $(BUILD)/naga_ctrls.o
@@ -132,7 +133,7 @@ $(BUILD)/cbridge.o: src/ui/cbridge.cpp | $(BUILD)
 naga-ui: $(CORE_OBJS) $(BUILD)/ui_main.o $(BUILD)/ui_state.o \
          $(BUILD)/ui_layout.o $(BUILD)/ui_keys.o $(BUILD)/cbridge.o \
          $(BUILD)/remap_config.o $(CIMGUI_OBJS)
-	$(CXX) $(LDFLAGS) -o $@ $^ $(SDL3_LIBS) $(LIBUSB_LIBS) -lm -lpthread
+	$(CXX) $(LDFLAGS) -o $@ $^ $(GLFW_LIBS) $(LIBUSB_LIBS) -lm -lpthread -ldl
 
 # ---- tests ----------------------------------------------------------------
 

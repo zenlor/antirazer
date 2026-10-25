@@ -8,7 +8,7 @@ pkgs.mkShell {
     pkg-config
     libusb1
     libevdev
-    sdl3
+    glfw
     gdb
     usbutils # lsusb / usbhid-dump while poking at the device
     wireshark-cli # tshark: live usbmon capture + tools/captures analysis

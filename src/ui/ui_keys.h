@@ -4,9 +4,10 @@
  *
  * The device stores HID keyboard usages, which are physical positions in the
  * HID keyboard page. This module turns them into labels for the current
- * keyboard layout (via SDL) and captures a pressed key from SDL events.
+ * keyboard layout (via GLFW) and captures a pressed key or mouse button from
+ * GLFW callbacks.
  *
- * Nothing here talks to the device; it only translates between SDL, HID
+ * Nothing here talks to the device; it only translates between GLFW, HID
  * usages and the canonical names used by naga_keys.c.
  */
 #ifndef ANTIRAZER_UI_KEYS_H
@@ -14,8 +15,6 @@
 
 #include <stdbool.h>
 #include <stddef.h>
-
-#include <SDL3/SDL.h>
 
 enum ui_key_group {
 	UI_KEY_GROUP_LETTERS,
@@ -42,7 +41,7 @@ enum ui_key_capture {
 	UI_KEY_CAPTURE_CANCEL, /* Escape */
 };
 
-/* Build the catalog from the current SDL keyboard layout. Call after SDL_Init. */
+/* Build the catalog from the current GLFW keyboard layout. Call after glfwInit. */
 void ui_keys_rebuild(void);
 
 const ui_key_entry *ui_keys_entries(size_t *count);
@@ -50,14 +49,15 @@ const char *ui_key_group_name(enum ui_key_group group);
 const ui_key_entry *ui_keys_find(unsigned usage);
 
 /*
- * Translate one SDL event into a binding.
+ * Translate one GLFW key callback into a binding.
  *
  * Keyboard keys and mouse buttons are both captured: a mouse press reports
  * UI_KEY_CAPTURE_MOUSE with *usage set to the enum naga_mouse id. Modifier
  * keys are not captured as the binding themselves; their state is folded into
  * *mod when a non-modifier key is pressed.
  */
-enum ui_key_capture ui_keys_capture(const SDL_Event *event, unsigned *usage,
-				    unsigned *mod);
+enum ui_key_capture ui_keys_capture_key(int key, int action, int mods,
+					unsigned *usage, unsigned *mod);
+enum ui_key_capture ui_keys_capture_mouse(int button, unsigned *usage);
 
 #endif /* ANTIRAZER_UI_KEYS_H */

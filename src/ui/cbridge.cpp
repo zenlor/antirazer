@@ -1,43 +1,49 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later OR BSD-2-Clause */
 /*
- * cbridge.cpp — extern "C" shims for the ImGui SDL3 + SDLRenderer3 backends.
+ * cbridge.cpp — extern "C" shims for the ImGui GLFW + OpenGL3 backends.
  *
- * cimgui's generated SDL3 wrapper does not link cleanly at the pinned
- * upstream commit, so the C UI calls these wrappers around the upstream C++
- * backends instead.
+ * cimgui's generated wrappers are not used for the backends; the C UI calls
+ * these wrappers around the upstream C++ backends instead.
  */
 #include "imgui/imgui.h"
-#include "imgui/backends/imgui_impl_sdl3.h"
-#include "imgui/backends/imgui_impl_sdlrenderer3.h"
+#include "imgui/backends/imgui_impl_glfw.h"
+#include "imgui/backends/imgui_impl_opengl3.h"
 
 extern "C" {
 
-bool naga_impl_sdl3_init_for_sdlrenderer(SDL_Window *window, SDL_Renderer *renderer)
+bool naga_impl_glfw_init_for_opengl3(GLFWwindow *window)
 {
-	return ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
+	return ImGui_ImplGlfw_InitForOpenGL(window, true);
 }
 
-bool naga_impl_sdl3_processevent(const SDL_Event *event)
+void naga_impl_glfw_key_callback(GLFWwindow *window, int key, int scancode,
+				 int action, int mods)
 {
-	return ImGui_ImplSDL3_ProcessEvent(event);
+	ImGui_ImplGlfw_KeyCallback(window, key, scancode, action, mods);
 }
 
-void naga_impl_sdl3_newframe(void) { ImGui_ImplSDL3_NewFrame(); }
-
-void naga_impl_sdl3_shutdown(void) { ImGui_ImplSDL3_Shutdown(); }
-
-bool naga_impl_sdlrenderer3_init(SDL_Renderer *renderer)
+void naga_impl_glfw_mouse_button_callback(GLFWwindow *window, int button,
+					  int action, int mods)
 {
-	return ImGui_ImplSDLRenderer3_Init(renderer);
+	ImGui_ImplGlfw_MouseButtonCallback(window, button, action, mods);
 }
 
-void naga_impl_sdlrenderer3_newframe(void) { ImGui_ImplSDLRenderer3_NewFrame(); }
+void naga_impl_glfw_newframe(void) { ImGui_ImplGlfw_NewFrame(); }
 
-void naga_impl_sdlrenderer3_render(ImDrawData *draw_data, SDL_Renderer *renderer)
+void naga_impl_glfw_shutdown(void) { ImGui_ImplGlfw_Shutdown(); }
+
+bool naga_impl_opengl3_init(const char *glsl_version)
 {
-	ImGui_ImplSDLRenderer3_RenderDrawData(draw_data, renderer);
+	return ImGui_ImplOpenGL3_Init(glsl_version);
 }
 
-void naga_impl_sdlrenderer3_shutdown(void) { ImGui_ImplSDLRenderer3_Shutdown(); }
+void naga_impl_opengl3_newframe(void) { ImGui_ImplOpenGL3_NewFrame(); }
 
-} // extern "C"
+void naga_impl_opengl3_render(ImDrawData *draw_data)
+{
+	ImGui_ImplOpenGL3_RenderDrawData(draw_data);
+}
+
+void naga_impl_opengl3_shutdown(void) { ImGui_ImplOpenGL3_Shutdown(); }
+
+} /* extern "C" */

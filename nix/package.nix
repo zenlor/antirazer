@@ -22,7 +22,7 @@ pkgs.stdenv.mkDerivation (finalAttrs: {
   inherit src;
 
   nativeBuildInputs = [ pkgs.pkg-config ];
-  buildInputs = [ pkgs.libusb1 pkgs.libevdev pkgs.sdl3 ];
+  buildInputs = [ pkgs.libusb1 pkgs.libevdev pkgs.glfw ];
 
   buildPhase = ''
     runHook preBuild

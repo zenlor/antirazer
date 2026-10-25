@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later OR BSD-2-Clause */
-/* Unit tests for the UI staging queue (no SDL/ImGui/device needed). */
+/* Unit tests for the UI staging queue (no GLFW/ImGui/device needed). */
 #include <stdio.h>
 #include <string.h>
 

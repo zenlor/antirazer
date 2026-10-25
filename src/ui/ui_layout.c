@@ -318,7 +318,7 @@ static void key_display(const ui_key_entry *entry, char *buf, size_t len)
 
 /*
  * Layout-aware key chooser. The list is built from HID usages and labelled
- * with SDL's current keymap; selecting an entry stores the canonical usage in
+ * with GLFW's current keymap; selecting an entry stores the canonical usage in
  * the editor (and keeps the modifier checkboxes as they are).
  */
 static void draw_key_combo(ui_state *s, int current, unsigned mod)
