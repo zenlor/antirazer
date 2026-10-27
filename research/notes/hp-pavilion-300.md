@@ -88,6 +88,23 @@ The status report's candidate LED byte ([12], blackweb layout) always reads
 Conclusion: lighting behaviour is hardwired on this firmware; leave byte [2]
 at the factory value `03`.
 
+## Onboard DPI button — resets the active mapping (observed 2025-10-27)
+
+The DPI-cycle button (sector 5, physical bottom-right [4]) cycles DPI slots
+**and re-applies the factory mapping table** to the active state: after a
+press, custom sector bindings stop firing and the side buttons emit their
+factory mouse-button codes again (BTN_SIDE/BTN_EXTRA). Flash keeps the custom
+bindings — a re-enumeration (`hp-cfg reset`) reloads them. Where the factory
+table lives (ROM or a hidden region) is unknown; the sp98272 firmware
+updater may reveal it.
+
+Electrical map (confirmed by rebind + evtest): sector 3 = physical [1] (top
+left), sector 5 = physical [4] (bottom right, also the DPI button), sectors
+4/6/7 = remaining side buttons and/or phantom — factory 6/7 are device
+functions 09/0a with F8/F9 tap macros in their shift layers (shell-variant
+leftovers). Side buttons at factory emit mouse buttons 4/5 (BTN_SIDE /
+BTN_EXTRA).
+
 ## Button sectors `@0xC000` (8 × 512 B = feature reports `0x10`..`0x17`)
 
 Each sector: primary layer @+0, shift layer @+0xFE, checksum @+0x1FE
