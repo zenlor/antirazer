@@ -181,14 +181,14 @@ function onInputReport({ reportId, data }) {
   }
 }
 
-async function sendCmd(cmd, addr, payload) {
+async function sendCmd(cmd, addr, len, data) {
   const f = new Uint8Array(63);
   f[0] = cmd;
   if (addr !== null) { f[1] = addr & 0xff; f[2] = addr >> 8; }
-  if (payload) f.set(payload, 4);
+  f[3] = len;
+  if (data) f.set(data, 4);
   const pr = new Promise((resolve, reject) => {
-    pending = { cmd, addr: addr === null ? null : addr, len: payload ? payload[0] : 0,
-                resolve, reject };
+    pending = { cmd, addr: addr === null ? null : addr, len, resolve, reject };
     setTimeout(() => {
       if (pending && pending.reject === reject) {
         pending = null;
@@ -200,25 +200,19 @@ async function sendCmd(cmd, addr, payload) {
   return pr;
 }
 
-const hello = () => sendCmd(1, null, null);
+const hello = () => sendCmd(1, null, 0, null);
 async function readMem(addr, len) {
-  const p = await sendCmd(3, addr, new Uint8Array([len]));
+  const p = await sendCmd(3, addr, len, null);
   return p.slice(4, 4 + len);
 }
-async function beginSession() { await sendCmd(2, null, null); }
-async function endSession() { await sendCmd(7, null, null); }
+async function beginSession() { await sendCmd(2, null, 0, null); }
+async function endSession() { await sendCmd(7, null, 0, null); }
 async function writeSettingsBlock(b) {           // b: 39 bytes
-  const p = new Uint8Array(1 + b.length);
-  p[0] = b.length;
-  p.set(b, 1);
-  await sendCmd(5, SET_ADDR, p);
+  await sendCmd(5, SET_ADDR, b.length, b);
 }
-async function eraseSector(n) { await sendCmd(6, SEC_BASE + n * 0x200, new Uint8Array([0])); }
+async function eraseSector(n) { await sendCmd(6, SEC_BASE + n * 0x200, 0, null); }
 async function writeChunk(addr, chunk) {
-  const p = new Uint8Array(1 + chunk.length);
-  p[0] = chunk.length;
-  p.set(chunk, 1);
-  await sendCmd(4, addr, p);
+  await sendCmd(4, addr, chunk.length, chunk);
 }
 
 async function featureRead(rid) {
