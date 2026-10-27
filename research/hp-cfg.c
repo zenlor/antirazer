@@ -10,6 +10,7 @@
  *
  * usage: hp-cfg [hidraw]
  */
+#include <ctype.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -159,6 +160,96 @@ static int usb_reset(void)
 	return found ? 0 : -1;
 }
 
+static int cmd_read_chunk(unsigned addr, unsigned char len,
+			  unsigned char *data)
+{
+	unsigned char out[64] = {0x04, 0x03, addr & 0xff, addr >> 8, len};
+	unsigned char in[64];
+
+	if (xfer(out, in) < 0)
+		return -1;
+	memcpy(data, in + 5, len);
+	return 0;
+}
+
+/* feature reports 0x10..0x17 mirror the button sectors */
+static int feature_read(unsigned char rid, unsigned char *out)
+{
+	unsigned char buf[513] = {rid};
+
+	if (ioctl(fd, HIDIOCGFEATURE(sizeof buf), buf) < 0)
+		return -1;
+	memcpy(out, buf + 1, 512);
+	return 0;
+}
+
+/* read sector n twice — via feature report and via cmd 03 — and compare;
+   a match confirms the 0xC000 + n*0x200 address map before any write */
+static int read_sector(int n, unsigned char *s)
+{
+	const unsigned addr = 0xc000 + n * 0x200;
+	unsigned char cmd[512];
+
+	if (feature_read(0x10 + n, s) < 0) {
+		perror("feature read");
+		return -1;
+	}
+	for (unsigned off = 0; off < 512; off += 59) {
+		unsigned chunk = 512 - off < 59 ? 512 - off : 59;
+
+		if (cmd_read_chunk(addr + off, chunk, cmd + off) < 0)
+			return -1;
+	}
+	printf("sector %d @%04x: cmd-03 read %s feature read\n", n, addr,
+	       !memcmp(cmd, s, 512) ? "==" : "!=");
+	return 0;
+}
+
+static void parse_layer(const unsigned char *p)
+{
+	printf("  type %02x label %02x mode %u n=%u tokens:", p[0], p[1],
+	       p[2], p[3]);
+	for (int i = 0; i < p[3] && 5 + 2 * i < 254; i++)
+		printf(" [%02x %02x]", p[4 + 2 * i], p[5 + 2 * i]);
+	printf("\n");
+}
+
+static int cmd_write_chunk(unsigned addr, unsigned char len,
+			   const unsigned char *data)
+{
+	unsigned char out[64] = {0x04, 0x04, addr & 0xff, addr >> 8, len};
+	unsigned char in[64];
+
+	memcpy(out + 5, data, len);
+	return xfer(out, in) < 0 ? -1 : 0;
+}
+
+/* blackweb apply: session, erase sector, write 512 B in <=59 B chunks,
+   commit. The erase is what makes this the dangerous path. */
+static int write_sector(int n, const unsigned char *s)
+{
+	const unsigned addr = 0xc000 + n * 0x200;
+	unsigned char out[64] = {0x04, 0x06, addr & 0xff, addr >> 8};
+	unsigned char in[64];
+
+	if (cmd_simple(0x02) < 0)
+		return -1;
+	if (xfer(out, in) < 0) {
+		fprintf(stderr, "erase failed\n");
+		cmd_simple(0x07);
+		return -1;
+	}
+	for (unsigned off = 0; off < 512; off += 59) {
+		unsigned chunk = 512 - off < 59 ? 512 - off : 59;
+
+		if (cmd_write_chunk(addr + off, chunk, s + off) < 0) {
+			cmd_simple(0x07);
+			return -1;
+		}
+	}
+	return cmd_simple(0x07);
+}
+
 static const char *pollname(unsigned code)
 {
 	switch (code) {
@@ -278,12 +369,104 @@ int main(int argc, char **argv)
 				if (codes[i] == (unsigned)atoi(argv[argi + 1]))
 					wr_poll = (int[]){1, 2, 4, 8}[i];
 			argi += 2;
+		} else if (argi + 1 < argc && !strcmp(a, "secget")) {
+			int n = atoi(argv[argi + 1]);
+			unsigned char s[512];
+			unsigned sum = 0, csum;
+			char name[32];
+			FILE *f;
+
+			if (n < 0 || n > 7 || read_sector(n, s) < 0)
+				return 1;
+			parse_layer(s);
+			parse_layer(s + 0xfe);
+			for (int i = 0; i < 0x1fe; i++)
+				sum += s[i];
+			csum = s[0x1fe] | s[0x1ff] << 8;
+			printf("  checksum stored %04x computed %04x (%s)\n",
+			       csum, (0x8032 + sum) & 0xffff,
+			       csum == ((0x8032 + sum) & 0xffff) ? "ok" :
+							   "MISMATCH");
+			snprintf(name, sizeof name, "hp-sec%d.bin", n);
+			f = fopen(name, "w");
+			if (f) {
+				fwrite(s, 1, 512, f);
+				fclose(f);
+				printf("  saved %s\n", name);
+			}
+			argi += 2;
+			continue;
+		} else if (argi + 1 < argc && !strcmp(a, "secput")) {
+			int n = atoi(argv[argi + 1]);
+			unsigned char s[512], sum = 0;
+			FILE *f = fopen(argv[argi + 2], "rb");
+
+			if (n < 0 || n > 7) {
+				fprintf(stderr, "sector 0..7\n");
+				return 1;
+			}
+			if (!f || fread(s, 1, 512, f) != 512) {
+				fprintf(stderr, "cannot read 512 B from %s\n",
+					argv[argi + 2]);
+				return 1;
+			}
+			fclose(f);
+			for (int i = 0; i < 0x1fe; i++)
+				sum += s[i];
+			if (((0x8032 + sum) & 0xffff) !=
+			    (unsigned)(s[0x1fe] | s[0x1ff] << 8)) {
+				fprintf(stderr, "%s: bad sector checksum\n",
+					argv[argi + 2]);
+				return 1;
+			}
+			if (write_sector(n, s) < 0)
+				return 1;
+			printf("sector %d restored from %s\n", n, argv[argi + 2]);
+			argi += 3;
+			continue;
+		} else if (argi + 1 < argc && !strcmp(a, "key")) {
+			int n = atoi(argv[argi + 1]);
+			int usage = (int)strtol(argv[argi + 2], NULL, 16);
+			int mod = 0, had_mod = 0;
+			unsigned char s[512], sum = 0;
+
+			if (n < 0 || n > 7 || usage < 0 || usage > 0xff) {
+				fprintf(stderr, "sector 0..7, usage 0x00..0xff\n");
+				return 1;
+			}
+			if (argi + 2 < argc && isdigit((unsigned char)argv[argi + 3][0])) {
+				mod = atoi(argv[argi + 3]);
+				had_mod = 1;
+			}
+			if (read_sector(n, s) < 0)
+				return 1;
+			/* single-key record (blackweb "Single Key": type 6,
+			   label 0x13); kind low nibble = modifier mask */
+			memset(s, 0, 0xfe);
+			s[0] = 0x06;
+			s[1] = 0x13;
+			s[3] = 0x01;
+			s[4] = (unsigned char)usage;
+			s[5] = (unsigned char)mod;
+			for (int i = 0; i < 0x1fe; i++)
+				sum += s[i];
+			s[0x1fe] = (0x8032 + sum) & 0xff;
+			s[0x1ff] = (0x8032 + sum) >> 8;
+			printf("sector %d -> key %02x mod %x: erasing and "
+			       "writing...\n", n, usage, mod);
+			if (write_sector(n, s) < 0)
+				return 1;
+			if (read_sector(n, s) == 0)
+				parse_layer(s);
+			argi += 3 + had_mod;
+			continue;
 		} else if (argi + 1 < argc && !strcmp(a, "led")) {
 			wr_led = (int)strtol(argv[argi + 1], NULL, 16);
 			argi += 2;
 		} else {
 			fprintf(stderr, "usage: hp-cfg [hidraw] [live] [slot N] "
-					"[poll HZ] [led XX] [reset]\n");
+					"[poll HZ] [led XX] [secget N] [key N USAGE [MOD]] "
+					"[secput N FILE] [reset]\n");
 			return 1;
 		}
 	}
