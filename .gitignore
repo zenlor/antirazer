@@ -24,3 +24,4 @@ __pycache__/
 /naga-wheel-filter
 /wheel.*.log
 /probe*.out
+.slop/session.dat
