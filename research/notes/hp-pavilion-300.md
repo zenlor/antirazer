@@ -74,6 +74,20 @@ replug-free apply; the hello/status reply's slot byte tracks the written
 value. `hp-cfg` auto-discovers the FF32 hidraw via /sys (hidraw numbering
 moves on replug).
 
+## LED — not software-configurable (probed 2025-10-27)
+
+The LED is activity-reactive: lights on movement/clicks, dark when idle, and
+the DPI button flashes the new slot's colour (the per-slot RGB bytes are real
+and firmware-used). Settings byte [2] is NOT the lighting control on this
+variant: `00`, `01`, `02`, `03` and `82` all persist with valid checksums and
+produce zero visible change (reactive behaviour continues unchanged).
+Feature `0x20` (the blackweb live-preview path) is not implemented either.
+The status report's candidate LED byte ([12], blackweb layout) always reads
+`00`.
+
+Conclusion: lighting behaviour is hardwired on this firmware; leave byte [2]
+at the factory value `03`.
+
 ## Button sectors `@0xC000` (8 × 512 B = feature reports `0x10`..`0x17`)
 
 Each sector: primary layer @+0, shift layer @+0xFE, checksum @+0x1FE
