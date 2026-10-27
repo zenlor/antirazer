@@ -396,6 +396,30 @@ int main(int argc, char **argv)
 			}
 			argi += 2;
 			continue;
+		} else if (argi + 2 < argc && !strcmp(a, "dump")) {
+			unsigned addr = (unsigned)strtol(argv[argi + 1], NULL, 16);
+			unsigned len = (unsigned)atoi(argv[argi + 2]);
+			FILE *f = fopen(argv[argi + 3], "w");
+
+			if (!f) {
+				perror(argv[argi + 3]);
+				return 1;
+			}
+			for (unsigned off = 0; off < len; off += 59) {
+				unsigned char chunk[59];
+				unsigned chunk_len = len - off < 59 ? len - off : 59;
+
+				if (cmd_read_chunk(addr + off, chunk_len, chunk) < 0) {
+					fclose(f);
+					return 1;
+				}
+				fwrite(chunk, 1, chunk_len, f);
+			}
+			fclose(f);
+			printf("dumped %u bytes @%s to %s\n", len, argv[argi + 1],
+			       argv[argi + 3]);
+			argi += 4;
+			continue;
 		} else if (argi + 1 < argc && !strcmp(a, "secput")) {
 			int n = atoi(argv[argi + 1]);
 			unsigned char s[512];

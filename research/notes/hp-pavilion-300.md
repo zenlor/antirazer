@@ -120,6 +120,23 @@ vendor buttons to device functions `09`/`0a`. The feature reports expose the
 first 64 bytes of each sector read-only; full read/write goes through
 cmd 03/06/04 at `0xC000 + i·0x200`.
 
+## Device flash map (read via cmd 03 `dump`, 2025-10-27)
+
+```
+0x0000–0x1000   4 KB firmware code (only code region; entropy 7.3)
+0x1000–0xBE00   empty (zeroed / one 1.5 KB data blob at 0xB000)
+0xBE00–0xC000   settings block
+0xC000–0xD000   8 button sectors
+```
+
+The whole flash is 52 KB — the same 0xD000 span the updater's image uses.
+There is no second configuration bank and no hidden capability region: the
+firmware is a minimal 4 KB HID/config engine. "Profiles" in the vendor app
+were host-side files (the app keeps 5 profiles in memory only). Our tooling
+already covers every onboard capability; the only deeper path would be
+rewriting the 4 KB firmware itself (unknown ISA, brick risk, nothing to
+gain). A full flash dump lives in ./tmp (not committed — binary blob).
+
 ## Updater (sp98272, HPPAVGamingMouse300_V0015) — protocol confirmed
 
 The softpaq's updater is a C++Builder HID client for the same channel
