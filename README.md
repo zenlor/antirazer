@@ -149,6 +149,25 @@ GLFW reports `EGL: Failed to get EGL display`; add the user
 (`sudo usermod -aG video "$USER"`), log out and back in, and retry. X11/XWayland
 remains usable without that access.
 
+## From the browser
+
+`index.html` is the same configuration protocol as a single static page over
+WebHID — no build, no server side. Serve it locally and open it in a
+Chromium-family browser (Firefox and Safari do not ship WebHID):
+
+```sh
+python3 -m http.server 8000        # then http://localhost:8000
+```
+
+It is also served ready-to-use at <https://zenlor.github.io/antirazer/>.
+
+Click **Connect**, pick the Naga entry that answers (the mouse exposes several
+interfaces; the page probes each selection and keeps the one that talks the
+mapping protocol), and the tool reads every control on both layers. Edits are
+written to flash and committed immediately, DPI included. The udev rule above
+must be installed, and naga-ui / the naga-remap daemon must be closed — the
+config channel is exclusive.
+
 ## Remapping from a file
 
 `naga-remap` applies a JSON map and runs host-side bindings:
