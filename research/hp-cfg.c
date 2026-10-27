@@ -72,14 +72,16 @@ static int cmd_simple(unsigned char cmd)
 	return xfer(out, in);
 }
 
-/* hello reply = status report; byte 3 is the slot the firmware is RUNNING */
+/* hello reply = status report; byte 3 is the slot the firmware is RUNNING,
+   byte 12 is the blackweb-family live LED mode byte */
 static int report_live_slot(void)
 {
 	unsigned char out[64] = {0x04, 0x01}, in[64];
 
 	if (xfer(out, in) < 0)
 		return -1;
-	printf("device reports live slot: %u (poll code %u)\n", in[3], in[2]);
+	printf("device reports live slot: %u (poll code %u, led byte %02x)\n",
+	       in[3], in[2], in[12]);
 	return 0;
 }
 
@@ -257,33 +259,33 @@ int main(int argc, char **argv)
 	if (SETTINGS_LEN % 16)
 		printf("\n");
 
-	if (argc > argi && !strcmp(argv[argi], "live")) {
-		live = 1;
-		argi++;
-	}
-	if (argc > argi + 1 && !strcmp(argv[argi], "slot")) {
-		wr_slot = atoi(argv[argi + 1]);
-		argi += 2;
-	}
-	if (argc > argi + 1 && !strcmp(argv[argi], "poll")) {
-		const unsigned codes[] = {1000, 500, 250, 125};
-		for (size_t i = 0; i < 4; i++)
-			if (codes[i] == (unsigned)atoi(argv[argi + 1]))
-				wr_poll = (int[]){1, 2, 4, 8}[i];
-		argi += 2;
-	}
-	if (argc > argi + 1 && !strcmp(argv[argi], "led")) {
-		wr_led = (int)strtol(argv[argi + 1], NULL, 16);
-		argi += 2;
-	}
-	if (argc > argi && !strcmp(argv[argi], "reset")) {
-		want_reset = 1;
-		argi++;
-	}
-	if (argc > argi) {
-		fprintf(stderr, "usage: hp-cfg [hidraw] [live] [slot N] "
-				"[poll HZ] [led XX] [reset]\n");
-		return 1;
+	while (argi < argc) {
+		const char *a = argv[argi];
+
+		if (!strcmp(a, "live")) {
+			live = 1;
+			argi++;
+		} else if (!strcmp(a, "reset")) {
+			want_reset = 1;
+			argi++;
+		} else if (argi + 1 < argc && !strcmp(a, "slot")) {
+			wr_slot = atoi(argv[argi + 1]);
+			argi += 2;
+		} else if (argi + 1 < argc && !strcmp(a, "poll")) {
+			const unsigned codes[] = {1000, 500, 250, 125};
+
+			for (size_t i = 0; i < 4; i++)
+				if (codes[i] == (unsigned)atoi(argv[argi + 1]))
+					wr_poll = (int[]){1, 2, 4, 8}[i];
+			argi += 2;
+		} else if (argi + 1 < argc && !strcmp(a, "led")) {
+			wr_led = (int)strtol(argv[argi + 1], NULL, 16);
+			argi += 2;
+		} else {
+			fprintf(stderr, "usage: hp-cfg [hidraw] [live] [slot N] "
+					"[poll HZ] [led XX] [reset]\n");
+			return 1;
+		}
 	}
 	if (want_reset && wr_slot < 0 && !wr_poll && wr_led < 0) {
 		close(fd);                 /* node dies with the enumeration */
