@@ -398,7 +398,8 @@ int main(int argc, char **argv)
 			continue;
 		} else if (argi + 1 < argc && !strcmp(a, "secput")) {
 			int n = atoi(argv[argi + 1]);
-			unsigned char s[512], sum = 0;
+			unsigned char s[512];
+			unsigned sum = 0x8032, csum;
 			FILE *f = fopen(argv[argi + 2], "rb");
 
 			if (n < 0 || n > 7) {
@@ -411,13 +412,18 @@ int main(int argc, char **argv)
 				return 1;
 			}
 			fclose(f);
+			sum = 0x8032;
 			for (int i = 0; i < 0x1fe; i++)
 				sum += s[i];
-			if (((0x8032 + sum) & 0xffff) !=
-			    (unsigned)(s[0x1fe] | s[0x1ff] << 8)) {
-				fprintf(stderr, "%s: bad sector checksum\n",
-					argv[argi + 2]);
-				return 1;
+			sum &= 0xffff;
+			csum = s[0x1fe] | s[0x1ff] << 8;
+			if (csum != sum) {
+				/* the firmware pokes bytes inside sectors; heal
+				   the checksum so the file round-trips */
+				printf("%s: checksum %04x -> %04x (fixed)\n",
+				       argv[argi + 2], csum, sum);
+				s[0x1fe] = sum & 0xff;
+				s[0x1ff] = sum >> 8;
 			}
 			if (write_sector(n, s) < 0)
 				return 1;
@@ -428,7 +434,8 @@ int main(int argc, char **argv)
 			int n = atoi(argv[argi + 1]);
 			int usage = (int)strtol(argv[argi + 2], NULL, 16);
 			int mod = 0, had_mod = 0;
-			unsigned char s[512], sum = 0;
+			unsigned char s[512];
+			unsigned sum = 0;
 
 			if (n < 0 || n > 7 || usage < 0 || usage > 0xff) {
 				fprintf(stderr, "sector 0..7, usage 0x00..0xff\n");
