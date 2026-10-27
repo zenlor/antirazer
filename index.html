@@ -1,0 +1,442 @@
+<!doctype html>
+<!--
+  antirazer web — Razer Naga Left-Handed Edition 2020 (1532:008d)
+  Browser configurator for the 90-byte feature-report protocol (docs/protocol.md).
+  WebHID only: Chromium/Brave/Edge. Serve over localhost (or open as file://);
+  the udev rule from udev/99-naga.rules must be installed.
+  No dependencies, no build. Close naga-ui / naga-remap daemon first: the
+  device grants exclusive access.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="dark">
+<title>antirazer web — Naga LH 2020</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 14px/1.4 monospace; margin: 1rem auto; max-width: 42rem; padding: 0 1rem; }
+  h1 { font-size: 1.1rem; } h1 a { color: inherit; } h1 span { color: #888; font-weight: normal; }
+  #warn { color: #c9a227; font-size: .8rem; margin: .5rem 0; }
+  #status { color: #888; }
+  table { border-collapse: collapse; width: 100%; margin-top: .5rem; }
+  th, td { border: 1px solid #333; padding: .2rem .5rem; text-align: left; }
+  th { background: #222; }
+  tr.grp td { background: #1a1a1a; color: #888; font-size: .8rem; }
+  tbody[data-ctr] { cursor: pointer; }
+  tbody.sel td { background: #26436b; }
+  form { margin: .8rem 0; padding: .6rem; border: 1px solid #333; }
+  form label { margin-right: .8rem; white-space: nowrap; }
+  input[type=number] { width: 6em; }
+  button { font: inherit; }
+  .row { margin-top: .4rem; }
+  #err { color: #e06c5b; white-space: pre-wrap; }
+  .hide { display: none; }
+</style>
+</head>
+<body>
+<h1><a href="https://github.com/zenlor/antirazer">antirazer web</a> <span>— Razer Naga LH 2020 (1532:008d)</span></h1>
+<div id="warn">
+  Chromium/Brave/Edge only (WebHID) · writes go to the mouse's flash and persist ·
+  close naga-ui and the naga-remap daemon first (exclusive access).
+</div>
+<div class="row">
+  <button id="connect">Connect</button>
+  <button id="reread" class="hide">Re-read all</button>
+  <span id="status">disconnected</span>
+</div>
+<div id="err"></div>
+
+<div id="main" class="hide">
+  <div class="row">
+    DPI:
+    <input id="dpiX" type="number" min="100" max="16000" step="50" value="1600"> ×
+    <input id="dpiY" type="number" min="100" max="16000" step="50" value="1600">
+    <button id="dpiSet">Apply DPI</button>
+    <span id="dpiNote"></span>
+  </div>
+  <table id="tbl">
+    <thead><tr><th>control</th><th>normal</th><th>hypershift</th></tr></thead>
+  </table>
+
+  <form id="ed" class="hide">
+    <b id="edTitle"></b>
+    <div class="row">
+      <label>layer <select id="elayer"><option value="0">normal</option><option value="1">hypershift</option></select></label>
+      <label>action <select id="etype">
+        <option value="default">default</option>
+        <option value="key">keyboard key</option>
+        <option value="mouse">mouse button</option>
+        <option value="turbo">autofire (turbo)</option>
+        <option value="hypershift">Hypershift switch</option>
+        <option value="dpi">DPI up/down</option>
+      </select></label>
+    </div>
+    <div class="row" data-for="key turbo">
+      key <input id="ekey" list="keynames" placeholder="x / f5 / kp1 / 0x1a">
+      <datalist id="keynames"></datalist>
+      modifiers:
+      <label><input type="checkbox" data-mod="1">ctrl</label>
+      <label><input type="checkbox" data-mod="2">shift</label>
+      <label><input type="checkbox" data-mod="4">alt</label>
+      <label><input type="checkbox" data-mod="8">super</label>
+      <label><input type="checkbox" data-mod="16">rctrl</label>
+      <label><input type="checkbox" data-mod="32">rshift</label>
+      <label><input type="checkbox" data-mod="64">ralt</label>
+      <label><input type="checkbox" data-mod="128">rsuper</label>
+    </div>
+    <div class="row" data-for="mouse">
+      button <select id="emouse">
+        <option value="1">left</option><option value="2">right</option>
+        <option value="3">middle</option><option value="4">back</option>
+        <option value="5">forward</option>
+      </select>
+    </div>
+    <div class="row" data-for="turbo">
+      repeat every <input id="edelay" type="number" min="2" max="65535" value="50"> ms
+    </div>
+    <div class="row" data-for="dpi">
+      <select id="edpi"><option value="1">DPI up</option><option value="2">DPI down</option></select>
+    </div>
+    <div class="row">
+      <button type="submit">Write + commit</button>
+      <button type="button" id="edRefresh">Re-read this control</button>
+      <span id="edMsg"></span>
+    </div>
+  </form>
+</div>
+
+<script>
+'use strict';
+const VID = 0x1532, PID = 0x008d, TID = 0x1f, LEN = 90;
+
+/* controls with onboard records (docs/protocol.md); wheel rotation is a HID
+   axis and stays host-side — out of scope for a browser page */
+const CONTROLS = [
+  ['main', [
+    [0x01, 'left'], [0x02, 'right'], [0x03, 'middle'],
+  ]],
+  ['extra buttons', [
+    [0x09, 'mb9'], [0x0a, 'mb10'],
+  ]],
+  ['DPI keys', [
+    [0x0b, 'dpi-up'], [0x0c, 'dpi-down'],
+  ]],
+  ['other', [
+    [0x0e, 'profile'], [0x34, 'tilt-right'], [0x35, 'tilt-left'],
+  ]],
+  ['thumb grid', [
+    [0x40, '1'], [0x41, '2'], [0x42, '3'], [0x43, '4'],
+    [0x44, '5'], [0x45, '6'], [0x46, '7'], [0x47, '8'],
+    [0x48, '9'], [0x49, '0'], [0x4a, '-'], [0x4b, '='],
+  ]],
+];
+
+/* ported from src/naga_keys.c */
+const KEYS = {
+  enter: 0x28, esc: 0x29, backspace: 0x2a, tab: 0x2b, space: 0x2c, caps: 0x39,
+  print: 0x46, scroll: 0x47, pause: 0x48, insert: 0x49, home: 0x4a, pgup: 0x4b,
+  delete: 0x4c, end: 0x4d, pgdn: 0x4e, right: 0x4f, left: 0x50, down: 0x51,
+  up: 0x52, minus: 0x2d, equal: 0x2e, lbracket: 0x2f, rbracket: 0x30,
+  bslash: 0x31, hash: 0x32, semicolon: 0x33, quote: 0x34, grave: 0x35,
+  comma: 0x36, dot: 0x37, slash: 0x38, numlock: 0x53, kpdiv: 0x54, kpmul: 0x55,
+  kpsub: 0x56, kpadd: 0x57, kpenter: 0x58, kp1: 0x59, kp2: 0x5a, kp3: 0x5b,
+  kp4: 0x5c, kp5: 0x5d, kp6: 0x5e, kp7: 0x5f, kp8: 0x60, kp9: 0x61, kp0: 0x62,
+  kpdot: 0x63, kpequal: 0x67, kpcomma: 0x85, application: 0x65, power: 0x66, mute: 0x7f, volup: 0x80,
+  voldown: 0x81, next: 0xb5, prev: 0xb6, stop: 0xb7, eject: 0xb8,
+  playpause: 0xcd,
+};
+for (let i = 0; i < 26; i++) KEYS[String.fromCharCode(97 + i)] = 0x04 + i;
+for (let i = 0; i < 10; i++) KEYS['' + ((i + 1) % 10)] = 0x1e + i;
+for (let i = 0; i < 12; i++) KEYS['f' + (i + 1)] = 0x3a + i;
+for (let i = 0; i < 12; i++) KEYS['f' + (i + 13)] = 0x68 + i;
+const MODN = ['ctrl', 'shift', 'alt', 'super', 'rctrl', 'rshift', 'ralt', 'rsuper'];
+const MOUSEN = [null, 'left', 'right', 'middle', 'back', 'forward'];
+
+const hex = (n) => '0x' + n.toString(16).padStart(2, '0');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const $ = (id) => document.getElementById(id);
+
+/* ---- protocol (port of src/naga.c) ------------------------------------ */
+
+function frame(cls, id, size, args) {
+  const b = new Uint8Array(LEN);
+  b[1] = TID;                       // this generation only answers 0x1f; 0xff
+  b[5] = size;                      // resets the USB link — never change it
+  b[6] = cls;
+  b[7] = id;
+  b.set(args, 8);
+  let crc = 0;
+  for (let i = 2; i < 88; i++) crc ^= b[i];
+  b[88] = crc;
+  return b;
+}
+
+async function transact(dev, cls, id, size, args) {
+  await dev.sendFeatureReport(0, frame(cls, id, size, args));
+  await sleep(50);                  // settle delay, as on Linux
+  let r = new Uint8Array((await dev.receiveFeatureReport(0)).buffer);
+  if (r.length === LEN + 1 && r[0] === 0) r = r.subarray(1); // report-id byte
+  if (r[0] !== 0x02)                // 01 busy, 02 ok, 03 rejected
+    throw new Error('device answered ' + hex(r[0]) + ' to ' + hex(cls) + '/' + hex(id));
+  return r;
+}
+
+/* record <-> 10-byte argument block */
+function recordBytes(ctr, layer, r) {
+  const a = new Uint8Array(10);
+  a[0] = 1; a[1] = ctr; a[2] = layer; a[3] = r.type; a[4] = r.data.length;
+  a.set(r.data, 5);
+  return a;
+}
+function parseRecord(a) {
+  return {
+    ctr: a[1], layer: a[2], type: a[3],
+    data: Array.from(a.slice(5, 5 + a[4])),
+  };
+}
+
+async function getRec(dev, ctr, layer) {
+  const req = [1, ctr, layer, 2];
+  let r;
+  try {
+    r = await transact(dev, 0x02, 0x8c, 0x0a, req);
+  } catch (e) {                     // reads echo right after a write burst
+    await sleep(1000);              // -> wait and retry once
+    r = await transact(dev, 0x02, 0x8c, 0x0a, req);
+  }
+  return parseRecord(r.slice(8, 18));
+}
+
+async function setRec(dev, ctr, layer, rec) {
+  await transact(dev, 0x02, 0x0c, 0x0a, recordBytes(ctr, layer, rec));
+  await transact(dev, 0x00, 0xb3, 0x01, [0]);   // commit: 00/B3
+}
+
+async function setDpi(dev, x, y) {
+  await transact(dev, 0x04, 0x05, 0x07, [0, x & 0xff, x >> 8, y & 0xff, y >> 8, 0, 0]);
+  await transact(dev, 0x00, 0xb3, 0x01, [0]);
+}
+
+/* ---- rendering --------------------------------------------------------- */
+
+function keyname(u) {
+  if (u >= 0x04 && u <= 0x1d) return String.fromCharCode(97 + u - 4);
+  if (u >= 0x1e && u <= 0x27) return '' + ((u - 0x1d) % 10);
+  if (u >= 0x3a && u <= 0x45) return 'f' + (u - 0x39);
+  if (u >= 0x68 && u <= 0x73) return 'f' + (u - 0x68 + 13);
+  for (const [n, v] of Object.entries(KEYS)) if (v === u) return n;
+  return hex(u);
+}
+function modstr(m) {
+  let s = '';
+  for (let i = 0; i < 8; i++) if (m & (1 << i)) s += MODN[i] + '+';
+  return s;
+}
+function parseUsage(s) {
+  s = s.trim().toLowerCase();
+  if (/^0x[0-9a-f]+$/.test(s)) return parseInt(s, 16);
+  if (s in KEYS) return KEYS[s];
+  throw new Error('unknown key "' + s + '" (name or 0xNN)');
+}
+function bindingName(rec) {
+  if (!rec || rec.type === 0) return 'default';
+  const [m, u, rh, rl] = rec.data;
+  switch (rec.type) {
+    case 1: return 'mouse ' + (MOUSEN[m] || hex(m));
+    case 2: return modstr(m) + keyname(u);
+    case 6: return m === 1 ? 'dpi up' : m === 2 ? 'dpi down' : 'dpi ' + hex(m);
+    case 7: return 'profile';
+    case 0x0b: return 'hypershift';
+    case 0x0d: return 'turbo ' + modstr(m) + keyname(u) + ' ' + Math.round(1e6 / (rh << 8 | rl)) + 'ms';
+    case 0x0e: return m === 9 ? 'tilt left' : m === 10 ? 'tilt right' : 'tilt ' + hex(m);
+    default: return 'type ' + hex(rec.type);
+  }
+}
+
+const model = {};                   // ctr -> {0: rec, 1: rec}
+let dev = null, sel = null;
+
+function renderRow(ctr) {
+  for (const layer of [0, 1])
+    document.querySelector(`tbody[data-ctr="${ctr}"] td[data-l="${layer}"]`)
+      .textContent = bindingName(model[ctr][layer]);
+}
+
+async function readAll() {
+  let n = 0;
+  const total = CONTROLS.reduce((s, [, cs]) => s + cs.length, 0) * 2;
+  for (const [, cs] of CONTROLS)
+    for (const [ctr] of cs) {
+      model[ctr] = { 0: await getRec(dev, ctr, 0), 1: await getRec(dev, ctr, 1) };
+      renderRow(ctr);
+      $('status').textContent = `reading ${++n * 2}/${total}…`;
+    }
+}
+
+function buildTable() {
+  const tbl = $('tbl');
+  for (const [group, cs] of CONTROLS) {
+    const g = tbl.insertRow();
+    g.innerHTML = `<td colspan="3">${group}</td>`;
+    for (const [ctr, name] of cs) {
+      const body = document.createElement('tbody');
+      body.dataset.ctr = ctr;
+      body.innerHTML =
+        `<tr><td>${name}</td><td data-l="0"></td><td data-l="1"></td></tr>`;
+      body.onclick = () => select(ctr);
+      tbl.append(body);
+    }
+  }
+}
+
+/* ---- editor ------------------------------------------------------------ */
+
+function select(ctr) {
+  sel = ctr;
+  document.querySelectorAll('tbody.sel').forEach((t) => t.classList.remove('sel'));
+  document.querySelector(`tbody[data-ctr="${ctr}"]`).classList.add('sel');
+  $('ed').classList.remove('hide');
+  $('edTitle').textContent =
+    'control ' + (Object.fromEntries(CONTROLS.flatMap(([, c]) => c))[ctr]) +
+    ' (' + hex(ctr) + ')';
+  $('edMsg').textContent = '';
+}
+
+function editorRec() {
+  const type = $('etype').value;
+  const layer = +$('elayer').value;
+  const mods = [...document.querySelectorAll('input[data-mod]:checked')]
+    .reduce((m, c) => m | +c.dataset.mod, 0);
+  switch (type) {
+    case 'default': return { layer, type: 0, data: [] };
+    case 'key': return { layer, type: 2, data: [mods, parseUsage($('ekey').value)] };
+    case 'mouse': return { layer, type: 1, data: [+$('emouse').value] };
+    case 'turbo': {
+      const rate = Math.min(0xffff, Math.round(1e6 / +$('edelay').value));
+      return { layer, type: 0x0d, data: [mods, parseUsage($('ekey').value), rate >> 8, rate & 0xff] };
+    }
+    case 'hypershift': return { layer, type: 0x0b, data: [1] };
+    case 'dpi': return { layer, type: 6, data: [+$('edpi').value] };
+  }
+}
+
+function showEditorRec() {
+  const r = model[sel][+$('elayer').value];
+  const byType = { 0: 'default', 2: 'key', 1: 'mouse', 0x0d: 'turbo', 0x0b: 'hypershift', 6: 'dpi' };
+  $('etype').value = byType[r.type] ?? 'default';
+  for (const c of document.querySelectorAll('input[data-mod]')) c.checked = false;
+  if (r.type === 2 || r.type === 0x0d) {
+    $('ekey').value = keyname(r.data[1]);
+    for (const c of document.querySelectorAll('input[data-mod]'))
+      c.checked = !!(r.data[0] & +c.dataset.mod);
+    if (r.type === 0x0d) $('edelay').value = Math.round(1e6 / (r.data[2] << 8 | r.data[3]));
+  } else if (r.type === 1) $('emouse').value = r.data[0];
+  else if (r.type === 6) $('edpi').value = r.data[0];
+  syncForm();
+}
+
+function syncForm() {
+  const t = $('etype').value;
+  for (const div of document.querySelectorAll('#ed [data-for]'))
+    div.classList.toggle('hide', !div.dataset.for.split(' ').includes(t));
+}
+
+/* ---- wiring ------------------------------------------------------------ */
+
+function fail(e) { $('err').textContent = String(e.message || e); }
+function ok(msg) { $('err').textContent = ''; $('status').textContent = msg; }
+
+async function connect() {
+  if (!('hid' in navigator)) {
+    fail('This browser has no WebHID. Use Chrome/Chromium/Brave/Edge ' +
+         '(Firefox and Safari do not ship it).');
+    return;
+  }
+  try {
+    const ds = await navigator.hid.requestDevice({
+      filters: [{ vendorId: VID, productId: PID }],
+    });
+    for (const d of ds) {
+      try {
+        await d.open();
+        await getRec(d, 0x40, 0);   // probe: only interface 0 answers this
+        dev = d;
+        break;
+      } catch (e) { try { await d.close(); } catch (_) {} }
+    }
+    if (!dev) return fail('No device answered. Pick every "Naga" entry in the ' +
+      'chooser (the mouse exposes several interfaces; only one is the config channel).');
+    ok(dev.productName + ' — connected');
+    $('main').classList.remove('hide');
+    $('reread').classList.remove('hide');
+    await readAll();
+    ok('read ' + Object.keys(model).length * 2 + ' records');
+  } catch (e) { fail(e); }
+}
+
+async function withDev(fn, busy, done) {
+  if (!dev) return fail('not connected');
+  try { ok(busy); const r = await fn(); ok(done(r)); return r; }
+  catch (e) { fail(e); }
+}
+
+$('connect').onclick = connect;
+$('reread').onclick = () => withDev(readAll, 'reading…', () => 're-read ok');
+
+$('etype').onchange = syncForm;
+$('elayer').onchange = showEditorRec;
+$('ed').onsubmit = async (e) => {
+  e.preventDefault();
+  const rec = editorRec();
+  await withDev(
+    () => setRec(dev, sel, rec.layer, rec).then(() => { model[sel][rec.layer] = { ...rec, ctr: sel }; renderRow(sel); }),
+    'writing…', () => { $('edMsg').textContent = 'written + committed'; return 'written'; });
+};
+$('edRefresh').onclick = () => withDev(
+  async () => {
+    await sleep(1000);              // reads right after writes echo
+    model[sel] = { 0: await getRec(dev, sel, 0), 1: await getRec(dev, sel, 1) };
+    renderRow(sel); showEditorRec();
+  },
+  'reading…', () => 're-read ok');
+
+$('dpiSet').onclick = () => withDev(
+  () => setDpi(dev, +$('dpiX').value, +$('dpiY').value),
+  'writing…', () => { $('dpiNote').textContent = 'applied'; return 'dpi set'; });
+
+/* ---- self-check (runs in the page; fails -> writes disabled) ----------- */
+
+function selftest() {
+  const b = frame(0x00, 0xb3, 0x01, [0]);
+  let crc = 0;
+  for (let i = 2; i < 88; i++) crc ^= b[i];
+  if (b[88] !== 0xb2 || b[88] !== crc) throw new Error('frame CRC broken');
+  const samples = [
+    { ctr: 0x40, layer: 0, type: 0, data: [] },
+    { ctr: 0x40, layer: 0, type: 2, data: [0, 0x1e] },          // "1" (capture)
+    { ctr: 0x40, layer: 1, type: 2, data: [0x06, 0x1b] },       // ralt+x
+    { ctr: 0x40, layer: 0, type: 0x0b, data: [1] },             // hypershift
+    { ctr: 0x40, layer: 0, type: 0x0d, data: [0, 0x1b, 0x01, 0x4d] }, // turbo
+    { ctr: 0x0b, layer: 0, type: 6, data: [1] },                // dpi up
+  ];
+  for (const s of samples) {
+    const p = parseRecord(recordBytes(s.ctr, s.layer, s));
+    for (const k of ['ctr', 'layer', 'type', 'data'])
+      if (JSON.stringify(p[k]) !== JSON.stringify(s[k]))
+        throw new Error('record round-trip broken at ' + k);
+  }
+  return true;
+}
+
+try {
+  selftest();
+  buildTable();
+  for (const n of Object.keys(KEYS)) $('keynames').append(new Option(n));
+  syncForm();
+} catch (e) {
+  fail(e);
+  for (const b of document.querySelectorAll('button')) b.disabled = true;
+}
+</script>
+</body>
+</html>
