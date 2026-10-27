@@ -135,7 +135,20 @@ firmware is a minimal 4 KB HID/config engine. "Profiles" in the vendor app
 were host-side files (the app keeps 5 profiles in memory only). Our tooling
 already covers every onboard capability; the only deeper path would be
 rewriting the 4 KB firmware itself (unknown ISA, brick risk, nothing to
-gain). A full flash dump lives in ./tmp (not committed — binary blob).
+gain). Full flash dump and extraction artifacts live in ./tmp (not
+committed — binary blobs; policy: keep them in ignored folders for future
+use).
+
+## ISA fingerprinting attempt
+
+`research/dis8051.js` is a minimal MCS-51 disassembler written while probing
+the dump. The code region disassembles as 8051 in places (`ACALL 0x430`,
+`CJNE R6,#0x78`) but other areas are 5-byte record tables
+(`01 02 01 00 00` groups) — the core is small and unknown, likely an ODM
+8051-derivative. Hardware: the MCU is a COB blob (unmarkable) on PCB
+AYMC001-A/AYWC001-A (Acrox ODM — same vendor string as the blackweb
+3938:1170); the boards carry a 12 MHz crystal, XRESET/SCL/3V/GND test pads
+and RGB LED pads. No public chip identification exists for the family.
 
 ## Updater (sp98272, HPPAVGamingMouse300_V0015) — protocol confirmed
 
