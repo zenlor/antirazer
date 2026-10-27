@@ -1,5 +1,6 @@
 # build output
 /build/
+/tmp/
 /naga-mapper
 /naga-ui
 /naga-remap

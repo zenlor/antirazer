@@ -120,6 +120,22 @@ vendor buttons to device functions `09`/`0a`. The feature reports expose the
 first 64 bytes of each sector read-only; full read/write goes through
 cmd 03/06/04 at `0xC000 + i·0x200`.
 
+## Updater (sp98272, HPPAVGamingMouse300_V0015) — protocol confirmed
+
+The softpaq's updater is a C++Builder HID client for the same channel
+(`HidD_Set/GetFeature`, `SetOutputReport`, report-ID based). Ghidra analysis
+of it confirms independently:
+
+* shadow layout: settings `0xBE00..0xBE32` (0x33), buttons `0xC000..0xD000`
+  (8 × 0x200) — identical to our read/write map
+* status reply: 9 × u16 DPI levels from reply[20] (ours: 8 populated + 0),
+  polling codes {1, 2, 4, 8}, DPI slot accepted only < 6
+* the whole flash is a 0xD000 image (firmware + config together); the app
+  keeps 5 profiles in its own memory only — the mouse stores one
+  configuration (no per-slot banks in flash)
+* the V15 image itself is not plainly embedded (install shell + online
+  version check); deep firmware-ISA RE remains a separate project
+
 ## Tools (all read-only unless stated)
 
 * `research/hp-watch.c` — live diff of the feature records + input tap
@@ -132,6 +148,6 @@ cmd 03/06/04 at `0xC000 + i·0x200`.
 
 Button-sector writes (rebinding — full token grammar in the blackweb doc),
 LED/RGB writes (same settings block, fields already decoded), levels/colours
-per slot. The WebHID page (`index.html`) could support this PID with the same
+per slot. The WebHID page (`site/hp.html`) could support this PID with the same
 transport — reports are 64 bytes with report id, `sendReport`/feature reports
 map 1:1.

@@ -156,7 +156,7 @@ WebHID — no build, no server side. Serve it locally and open it in a
 Chromium-family browser (Firefox and Safari do not ship WebHID):
 
 ```sh
-python3 -m http.server 8000        # then http://localhost:8000
+python3 -m http.server 8000 -d site  # then http://localhost:8000
 ```
 
 It is also served ready-to-use at <https://zenlor.github.io/antirazer/>.
