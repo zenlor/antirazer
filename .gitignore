@@ -24,4 +24,13 @@ __pycache__/
 /naga-wheel-filter
 /wheel.*.log
 /probe*.out
+/hp-cfg
+/hp.probe.*.log
+
+# research: sources and notes are tracked, artifacts never are
+research/vm/
+research/captures/
+research/*.bundle
+research/*.log
+research/*.out
 .slop/session*
