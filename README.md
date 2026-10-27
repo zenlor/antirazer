@@ -1,11 +1,14 @@
 # antirazer
 
-Configuration tool for the **Razer Naga Left-Handed Edition 2020**
-(USB `1532:008d`) on Linux.
+Configuration tools for two mice on Linux:
 
-It remaps the twelve thumb buttons — and reads the rest of the mouse — straight
-from the device firmware. No Razer Synapse, no Windows VM, no replug: changes
-are written to the mouse's flash and applied immediately.
+- **Razer Naga Left-Handed Edition 2020** (USB `1532:008d`)
+- **HP Pavilion Gaming Mouse 300** (USB `03f0:2941`) and the same Acrox-ODM
+  protocol family (the blackweb gaming mice)
+
+For the Naga it remaps the twelve thumb buttons — and reads the rest of the
+mouse — straight from the device firmware. No Razer Synapse, no Windows VM,
+no replug: changes are written to the mouse's flash and applied immediately.
 
 The mapping tools share one device core:
 
@@ -151,15 +154,16 @@ remains usable without that access.
 
 ## From the browser
 
-`index.html` is the same configuration protocol as a single static page over
-WebHID — no build, no server side. Serve it locally and open it in a
-Chromium-family browser (Firefox and Safari do not ship WebHID):
+The configurator pages are static files over WebHID — no build, no server
+side. Serve them locally and open them in a Chromium-family browser (Firefox
+and Safari do not ship WebHID):
 
 ```sh
 python3 -m http.server 8000 -d site  # then http://localhost:8000
 ```
 
-It is also served ready-to-use at <https://zenlor.github.io/antirazer/>.
+They are also served ready-to-use at <https://zenlor.github.io/antirazer/>
+(razer page at the root, HP page at [/hp.html](https://zenlor.github.io/antirazer/hp.html)).
 
 Click **Connect**, pick the Naga entry that answers (the mouse exposes several
 interfaces; the page probes each selection and keeps the one that talks the
@@ -167,6 +171,49 @@ mapping protocol), and the tool reads every control on both layers. Edits are
 written to flash and committed immediately, DPI included. The udev rule above
 must be installed, and naga-ui / the naga-remap daemon must be closed — the
 config channel is exclusive.
+
+## HP Pavilion Gaming Mouse 300
+
+`research/hp-cfg.c` and `site/hp.html` configure the **HP Pavilion Gaming
+Mouse 300** (`03f0:2941`) and the same Acrox-ODM family (the blackweb gaming
+mice share this protocol). The decoded memory map, wire format and firmware
+findings live in
+[research/notes/hp-pavilion-300.md](research/notes/hp-pavilion-300.md).
+
+Everything below is verified on hardware:
+
+- settings block: polling (125–1000 Hz), active DPI slot, four DPI slots with
+  per-slot level and colour — written with the device's own checksum
+- button rebinding: 8 flash sectors × primary/shift layers, single-key
+  bindings (erase + write + commit + verify); sector backups via
+  `secget`/`secput`
+- replug-free apply (re-enumerate instead of physically replugging)
+
+Device quirks (firmware, not tooling): the onboard DPI button re-applies the
+factory bindings until the next replug; the LED is hardwired (activity-reactive,
+slot colours on DPI change — the `led` byte in the settings block is inert);
+the mouse stores exactly one configuration, so the vendor app's "profiles"
+were host-side files.
+
+Build and run (the udev rule is not required for this mouse; close any other
+program holding it — the config channel is exclusive):
+
+```sh
+gcc -O2 -o hp-cfg research/hp-cfg.c
+sudo ./hp-cfg                       # read settings + verify checksum
+sudo ./hp-cfg slot 2                # switch active DPI slot
+sudo ./hp-cfg poll 500              # set polling rate
+sudo ./hp-cfg key 3 1a 2            # bind sector 3 to shift+x (usage 0x1a)
+sudo ./hp-cfg secget 6              # back up a button sector to hp-sec6.bin
+sudo ./hp-cfg secput 6 hp-sec6.bin  # restore it
+sudo ./hp-cfg dump 0 48640 fw.bin   # read the whole firmware region
+sudo ./hp-cfg reset                 # replug-free apply
+```
+
+The browser page (`site/hp.html`) does the settings part without a build;
+sector rebinds stay a CLI feature. `research/hp-watch.c` diffs the button
+sectors live, `research/hp-stage.c` dumps the DPI status frame and
+`research/dis8051.js` is a small 8051 disassembler from the firmware RE.
 
 ## Remapping from a file
 
