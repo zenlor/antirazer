@@ -11,6 +11,7 @@ pkgs.mkShell {
     glfw
     gdb
     usbutils # lsusb / usbhid-dump while poking at the device
+    evtest # live input-event dump for the HP mouse research
     wireshark-cli # tshark: live usbmon capture + tools/captures analysis
     clang-tools # clang-format
     nixpkgs-fmt

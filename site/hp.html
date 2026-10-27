@@ -1,0 +1,452 @@
+<!doctype html>
+<!--
+  antirazer web — HP Pavilion Gaming Mouse 300 (03f0:2941)
+  Browser configurator for the FF32 command channel (research/notes/hp-pavilion-300.md).
+  WebHID only: Chromium/Brave/Edge. Settings and bindings persist in the mouse's
+  flash and apply at the next replug (the onboard DPI button restores factory
+  bindings until then). No dependencies, no build.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="dark">
+<title>antirazer web — HP Pavilion Gaming Mouse 300</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 14px/1.4 monospace; margin: 1rem auto; max-width: 42rem; padding: 0 1rem; }
+  h1 { font-size: 1.1rem; } h1 a { color: inherit; } h1 span { color: #888; font-weight: normal; }
+  #warn { color: #c9a227; font-size: .8rem; margin: .5rem 0; }
+  #status { color: #888; }
+  table { border-collapse: collapse; width: 100%; margin-top: .5rem; }
+  th, td { border: 1px solid #333; padding: .2rem .5rem; text-align: left; }
+  th { background: #222; }
+  form { margin: .8rem 0; padding: .6rem; border: 1px solid #333; }
+  form label { margin-right: .8rem; white-space: nowrap; }
+  input[type=number] { width: 6em; }
+  input[type=color] { padding: 0; width: 3em; height: 1.4em; border: none; background: none; }
+  button { font: inherit; }
+  .row { margin-top: .4rem; }
+  #err { color: #e06c5b; white-space: pre-wrap; }
+  .hide { display: none; }
+  fieldset { border: 1px solid #333; margin: .8rem 0; }
+  a { color: #7fb0e0; }
+</style>
+</head>
+<body>
+<h1><a href="https://github.com/zenlor/antirazer">antirazer web</a> <span>— HP Pavilion Gaming Mouse 300 (03f0:2941)</span></h1>
+<div id="warn">
+  Chromium/Brave/Edge only (WebHID) · writes go to the mouse's flash and apply at the
+  next replug · the onboard DPI button re-applies factory bindings (replug restores
+  yours) · the LED is hardwired (reactive + slot colours) and not configurable ·
+  protocol decoded in research/notes/hp-pavilion-300.md ·
+  <a href="index.html">Naga LH 2020 page</a>
+</div>
+<div class="row">
+  <button id="connect">Connect</button>
+  <button id="reread" class="hide">Re-read</button>
+  <span id="status">disconnected</span>
+</div>
+<div id="err"></div>
+
+<div id="main" class="hide">
+  <fieldset>
+    <legend>settings</legend>
+    <div class="row">
+      <label>polling
+        <select id="poll">
+          <option value="1">1000 Hz</option><option value="2">500 Hz</option>
+          <option value="4">250 Hz</option><option value="8">125 Hz</option>
+        </select>
+      </label>
+      <label>active DPI slot <select id="slot"></select></label>
+      <button id="applySettings">Write settings</button>
+      <span id="setMsg"></span>
+    </div>
+    <table id="slots">
+      <thead><tr><th>slot</th><th>on</th><th>level</th><th>DPI</th><th>colour</th></tr></thead>
+    </table>
+  </fieldset>
+
+  <fieldset>
+    <legend>buttons (flash sectors — primary layer)</legend>
+    <div class="row">
+      <button id="backup">Backup all</button>
+      <button id="restore">Restore all</button>
+      <span id="btnMsg"></span>
+    </div>
+    <table id="btns">
+      <thead><tr><th>sector</th><th>current binding</th><th>rebind to</th><th></th><th></th></tr></thead>
+    </table>
+    <div class="row">
+      key <input id="bkey" list="keynames" placeholder="x / f5 / kp1 / 0x1a">
+      <datalist id="keynames"></datalist>
+      modifiers:
+      <label><input type="checkbox" data-mod="1">ctrl</label>
+      <label><input type="checkbox" data-mod="2">shift</label>
+      <label><input type="checkbox" data-mod="4">alt</label>
+      <label><input type="checkbox" data-mod="8">win</label>
+      <span>(applies to the sector chosen with “select”; bindings apply after replug)</span>
+    </div>
+  </fieldset>
+</div>
+
+<script>
+'use strict';
+const VID = 0x3f0, PID = 0x2941;
+
+/* ---- settings block (HP variant, 37 bytes + u16le checksum) ------------- */
+const SET_ADDR = 0xbe00, SET_LEN = 0x33, SET_PAYLOAD = 0x27;
+const POLL_CODE = { '1000': 1, '500': 2, '250': 4, '125': 8 };
+const POLL_NAME = { 1: '1000 Hz', 2: '500 Hz', 4: '250 Hz', 8: '125 Hz' };
+
+/* ---- button sectors (0xC000 + n*0x200, primary@0 shift@0xFE csum@0x1FE) - */
+const SEC_BASE = 0xc000, SEC_COUNT = 8;
+const KIND = { 0x20: 'mouse ', 0x30: 'device', 0x08: 'macro ' };
+
+/* ---- keys (ported from src/naga_keys.c / index.html) -------------------- */
+const KEYS = {
+  enter: 0x28, esc: 0x29, backspace: 0x2a, tab: 0x2b, space: 0x2c, caps: 0x39,
+  print: 0x46, scroll: 0x47, pause: 0x48, insert: 0x49, home: 0x4a, pgup: 0x4b,
+  delete: 0x4c, end: 0x4d, pgdn: 0x4e, right: 0x4f, left: 0x50, down: 0x51,
+  up: 0x52, minus: 0x2d, equal: 0x2e, lbracket: 0x2f, rbracket: 0x30,
+  bslash: 0x31, hash: 0x32, semicolon: 0x33, quote: 0x34, grave: 0x35,
+  comma: 0x36, dot: 0x37, slash: 0x38, numlock: 0x53, kpdiv: 0x54, kpmul: 0x55,
+  kpsub: 0x56, kpadd: 0x57, kpenter: 0x58, kp1: 0x59, kp2: 0x5a, kp3: 0x5b,
+  kp4: 0x5c, kp5: 0x5d, kp6: 0x5e, kp7: 0x5f, kp8: 0x60, kp9: 0x61, kp0: 0x62,
+  kpdot: 0x63, kpequal: 0x67, kpcomma: 0x85, application: 0x65, power: 0x66,
+  mute: 0x7f, volup: 0x80, voldown: 0x81, next: 0xb5, prev: 0xb6, stop: 0xb7,
+  eject: 0xb8, playpause: 0xcd,
+};
+for (let i = 0; i < 26; i++) KEYS[String.fromCharCode(97 + i)] = 0x04 + i;
+for (let i = 0; i < 10; i++) KEYS['' + ((i + 1) % 10)] = 0x1e + i;
+for (let i = 0; i < 12; i++) KEYS['f' + (i + 1)] = 0x3a + i;
+for (let i = 0; i < 12; i++) KEYS['f' + (i + 13)] = 0x68 + i;
+const KEYN = {};
+for (const [n, v] of Object.entries(KEYS)) if (!(v in KEYN)) KEYN[v] = n;
+const MODN = ['ctrl', 'shift', 'alt', 'win', 'rctrl', 'rshift', 'ralt', 'rwin'];
+
+const hex = (n) => '0x' + n.toString(16).padStart(2, '0');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const $ = (id) => document.getElementById(id);
+
+function keyname(u) {
+  if (u >= 0x04 && u <= 0x1d) return String.fromCharCode(97 + u - 4);
+  if (u >= 0x1e && u <= 0x27) return '' + ((u - 0x1d) % 10);
+  if (u >= 0x3a && u <= 0x45) return 'f' + (u - 0x39);
+  if (u >= 0x68 && u <= 0x73) return 'f' + (u - 0x68 + 13);
+  return KEYN[u] || hex(u);
+}
+function parseUsage(s) {
+  s = s.trim().toLowerCase();
+  if (/^0x[0-9a-f]+$/.test(s)) return parseInt(s, 16);
+  if (s in KEYS) return KEYS[s];
+  throw new Error('unknown key "' + s + '" (name or 0xNN)');
+}
+function bindingName(rec) {
+  if (!rec || rec[3] === 0) return '—';
+  const [type, label, mode, n] = rec;
+  const toks = [];
+  for (let i = 0; i < n && 5 + 2 * i < 254; i++) toks.push([rec[4 + 2 * i], rec[5 + 2 * i]]);
+  if (type === 0 && toks.length === 1 && (toks[0][1] & 0xf0) === 0x20) {
+    const names = { 1: 'left', 2: 'right', 4: 'middle', 8: 'back', 16: 'forward' };
+    return 'mouse ' + (names[toks[0][0]] || hex(toks[0][0]));
+  }
+  if (type === 9 && toks.length === 1 && toks[0][1] === 0x30)
+    return toks[0][0] === 4 ? 'dpi cycle' : 'device fn ' + hex(toks[0][0]);
+  if (type === 6 && toks.length === 1 && toks[0][1] < 0x10) {
+    const m = toks[0][1];
+    return (m ? MODN.filter((_, i) => m & (1 << i)).join('+') + '+' : '') + keyname(toks[0][0]);
+  }
+  if (type === 8) return 'macro (' + n + ' tokens)';
+  return 'type ' + hex(type) + ' label ' + hex(label);
+}
+
+/* ---- transport: output report 4 = [cmd][addr lo][addr hi][len][data..] -- */
+
+let dev = null;
+let pending = null;                 // { cmd, addr, len, resolve }
+const latestStatus = { data: null };
+
+function onInputReport({ reportId, data }) {
+  if (reportId !== 4) return;
+  const p = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  if (p[0] === 1) latestStatus.data = p;
+  if (pending && p[0] === pending.cmd &&
+      (pending.addr === null || (p[1] === (pending.addr & 0xff) &&
+                                 p[2] === (pending.addr >> 8) &&
+                                 p[3] === pending.len))) {
+    const r = pending.resolve;
+    pending = null;
+    r(p);
+  }
+}
+
+async function sendCmd(cmd, addr, len, data) {
+  const f = new Uint8Array(63);
+  f[0] = cmd;
+  if (addr !== null) { f[1] = addr & 0xff; f[2] = addr >> 8; }
+  f[3] = len;
+  if (data) f.set(data, 4);
+  const pr = new Promise((resolve, reject) => {
+    pending = { cmd, addr: addr === null ? null : addr, len, resolve, reject };
+    setTimeout(() => {
+      if (pending && pending.reject === reject) {
+        pending = null;
+        reject(new Error('no reply to cmd ' + cmd));
+      }
+    }, 5000);
+  });
+  await dev.sendReport(4, f);      // resolver registered first: no reply race
+  return pr;
+}
+
+const hello = () => sendCmd(1, null, 0, null);
+async function readMem(addr, len) {
+  const p = await sendCmd(3, addr, len, null);
+  return p.slice(4, 4 + len);
+}
+async function beginSession() { await sendCmd(2, null, 0, null); }
+async function endSession() { await sendCmd(7, null, 0, null); }
+async function writeSettingsBlock(b) {           // b: 39 bytes
+  await sendCmd(5, SET_ADDR, b.length, b);
+}
+async function eraseSector(n) { await sendCmd(6, SEC_BASE + n * 0x200, 0, null); }
+async function writeChunk(addr, chunk) {
+  await sendCmd(4, addr, chunk.length, chunk);
+}
+
+async function featureRead(rid) {
+  const d = await dev.receiveFeatureReport(rid);
+  const skip = d.byteLength === 513 ? 1 : 0;   // report-id byte, if included
+  return new Uint8Array(d.buffer, d.byteOffset + skip, d.byteLength - skip);
+}
+
+/* ---- settings ----------------------------------------------------------- */
+
+let setBlock = null;                 // 39 bytes, payload + checksum
+let dpiTable = [];                   // 9 levels from the status report
+
+function checksum(block) {           // u16le(0x8032 + sum) at 0x25
+  let s = 0x8032;
+  for (let i = 0; i < 0x25; i++) s += block[i];
+  s &= 0xffff;
+  block[0x25] = s & 0xff;
+  block[0x26] = s >> 8;
+  return s;
+}
+
+async function readSettings() {
+  const raw = await readMem(SET_ADDR, SET_LEN);
+  setBlock = raw.slice(0, SET_PAYLOAD);
+  let sum = 0x8032;
+  for (let i = 0; i < 0x25; i++) sum += setBlock[i];
+  sum &= 0xffff;
+  const stored = setBlock[0x25] | setBlock[0x26] << 8;
+  if (stored !== sum) throw new Error('settings checksum mismatch: ' + hex(stored) + ' vs ' + hex(sum));
+}
+
+function renderSettings() {
+  const nSlots = setBlock[5];
+  const slotSel = $('slot');
+  slotSel.innerHTML = '';
+  for (let i = 0; i < nSlots; i++) slotSel.append(new Option('slot ' + i, i));
+  slotSel.value = setBlock[1];
+  $('poll').value = '' + (POLL_NAME[setBlock[0]] ? setBlock[0] : 1);
+  const tbl = $('slots');
+  for (const tr of [...tbl.querySelectorAll('tr:not(thead tr)')]) tr.remove();
+  for (let i = 0; i < nSlots; i++) {
+    const o = 6 + 5 * i;
+    const dpi = dpiTable[setBlock[7 + 5 * i]];
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + i + '</td>' +
+      '<td><input type="checkbox" data-i="' + i + '" data-f="en"' + (setBlock[o] ? ' checked' : '') + '></td>' +
+      '<td><input type="number" min="0" max="8" data-i="' + i + '" data-f="level" value="' + setBlock[o + 1] + '"></td>' +
+      '<td>' + (dpi === undefined ? '?' : dpi) + '</td>' +
+      '<td><input type="color" data-i="' + i + '" data-f="rgb" value="#' +
+        [2, 3, 4].map(k => setBlock[o + k].toString(16).padStart(2, '0')).join('') + '"></td>';
+    tbl.append(tr);
+  }
+}
+
+function collectSettings() {
+  setBlock[0] = +POLL_CODE[$('poll').value] || setBlock[0];
+  setBlock[1] = +$('slot').value;
+  for (const inp of document.querySelectorAll('#slots input')) {
+    const i = +inp.dataset.i, o = 6 + 5 * i;
+    if (inp.dataset.f === 'en') setBlock[o] = inp.checked ? 1 : 0;
+    else if (inp.dataset.f === 'level') setBlock[o + 1] = inp.valueAsNumber;
+    else if (inp.dataset.f === 'rgb') {
+      const v = parseInt(inp.value.slice(1), 16);
+      setBlock[o + 2] = v >> 16;
+      setBlock[o + 3] = (v >> 8) & 0xff;
+      setBlock[o + 4] = v & 0xff;
+    }
+  }
+  checksum(setBlock);
+}
+
+/* ---- buttons ------------------------------------------------------------ */
+
+let sectors = [];                    // 8 × 512
+
+function renderButtons() {
+  const tbl = $('btns');
+  for (const tr of [...tbl.querySelectorAll('tr:not(thead tr)')]) tr.remove();
+  for (let n = 0; n < SEC_COUNT; n++) {
+    const sec = sectors[n];
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + n + '</td>' +
+      '<td>' + bindingName(sec.slice(0, 8)) + '<br><small>shift: ' + bindingName(sec.slice(0xfe, 0x106)) + '</small></td>' +
+      '<td><input type="radio" name="sectorsel" value="' + n + '"' + (n === 3 ? ' checked' : '') + '> select</td>' +
+      '<td><button data-bind="' + n + '">Bind key</button></td>' +
+      '<td><button data-restore="' + n + '">Restore</button></td>';
+    tbl.append(tr);
+  }
+  for (const b of tbl.querySelectorAll('button[data-bind]'))
+    b.onclick = () => bindKey(+b.dataset.bind).catch(fail);
+  for (const b of tbl.querySelectorAll('button[data-restore]'))
+    b.onclick = () => restoreSector(+b.dataset.restore).catch(fail);
+}
+
+function saveLocal(n) {
+  localStorage.setItem('hp-sec' + n, [...sectors[n]].map(x => x.toString(16).padStart(2, '0')).join(''));
+}
+
+async function bindKey(n) {
+  const usage = parseUsage($('bkey').value);
+  const mod = [...document.querySelectorAll('input[data-mod]:checked')]
+    .reduce((m, c) => m | +c.dataset.mod, 0);
+  const sec = sectors[n].slice();
+  sec.fill(0, 0, 0xfe);
+  sec[0] = 0x06;                     // "single key": type 6, label 0x13
+  sec[1] = 0x13;
+  sec[3] = 0x01;
+  sec[4] = usage;
+  sec[5] = mod;
+  let s = 0x8032;
+  for (let i = 0; i < 0x1fe; i++) s += sec[i];
+  s &= 0xffff;
+  sec[0x1fe] = s & 0xff;
+  sec[0x1ff] = s >> 8;
+  await beginSession();
+  await eraseSector(n);
+  for (let off = 0; off < 512; off += 59)
+    await writeChunk(SEC_BASE + n * 0x200 + off, sec.slice(off, off + 59));
+  await endSession();
+  saveLocal(n);
+  await readButtons();
+}
+
+async function restoreSector(n) {
+  const hexs = localStorage.getItem('hp-sec' + n);
+  if (!hexs) throw new Error('no backup for sector ' + n);
+  const sec = new Uint8Array(512);
+  for (let i = 0; i < 512; i++) sec[i] = parseInt(hexs.slice(2 * i, 2 * i + 2), 16);
+  await beginSession();
+  await eraseSector(n);
+  for (let off = 0; off < 512; off += 59)
+    await writeChunk(SEC_BASE + n * 0x200 + off, sec.slice(off, off + 59));
+  await endSession();
+  await readButtons();
+}
+
+async function readButtons() {
+  for (let n = 0; n < SEC_COUNT; n++) {
+    sectors[n] = await featureRead(0x10 + n);
+    saveLocal(n);
+  }
+  renderButtons();
+}
+
+/* ---- wiring ------------------------------------------------------------- */
+
+function fail(e) { $('err').textContent = String(e.message || e); }
+function ok(msg) { $('err').textContent = ''; $('status').textContent = msg; }
+
+async function connect() {
+  if (!('hid' in navigator)) {
+    fail('This browser has no WebHID. Use Chrome/Chromium/Brave/Edge.');
+    return;
+  }
+  try {
+    const ds = await navigator.hid.requestDevice({
+      filters: [{ vendorId: VID, productId: PID, usagePage: 0xff32 }],
+    });
+    dev = ds[0];
+    if (!dev) return fail('no device selected');
+    await dev.open();
+    dev.addEventListener('inputreport', onInputReport);
+    ok(dev.productName + ' — connected');
+    $('main').classList.remove('hide');
+    $('reread').classList.remove('hide');
+    await readAll();
+  } catch (e) { fail(e); }
+}
+
+async function readAll() {
+  await hello();
+  const st = latestStatus.data;
+  if (st) {
+    dpiTable = [];
+    for (let i = 0; i < 9; i++) dpiTable.push(st[19 + 2 * i] | st[20 + 2 * i] << 8);
+  }
+  await readSettings();
+  renderSettings();
+  await readButtons();
+  ok('settings + ' + SEC_COUNT + ' sectors read; live slot ' + (st ? st[2] : '?'));
+}
+
+$('connect').onclick = connect;
+$('reread').onclick = async () => {
+  try { await readAll(); ok('re-read ok'); } catch (e) { fail(e); }
+};
+$('applySettings').onclick = async () => {
+  try {
+    collectSettings();
+    await beginSession();
+    await writeSettingsBlock(setBlock);
+    await endSession();
+    await readSettings();
+    $('setMsg').textContent = 'written — applies at next replug';
+    ok('settings written');
+  } catch (e) { fail(e); }
+};
+$('backup').onclick = () => {
+  for (let n = 0; n < SEC_COUNT; n++) saveLocal(n);
+  $('btnMsg').textContent = 'all sectors backed up';
+};
+$('restore').onclick = async () => {
+  try {
+    for (let n = 0; n < SEC_COUNT; n++) await restoreSector(n);
+    $('btnMsg').textContent = 'all sectors restored';
+  } catch (e) { fail(e); }
+};
+
+/* ---- self-check: checksum + token grammar against captured records ------ */
+
+function selftest() {
+  const blk = new Uint8Array(0x27);
+  blk[0] = 1; blk[1] = 0;
+  let s = 0x8032 + 1;
+  blk[0x25] = s & 0xff;
+  blk[0x26] = s >> 8;
+  if (checksum(blk) !== s) throw new Error('settings checksum broken');
+  const rec = [0x09, 0x1e, 0x01, 0x01, 0x04, 0x30];   // dpi-cycle (capture)
+  if (bindingName(rec) !== 'dpi cycle') throw new Error('binding parse broken');
+  const key = [0x06, 0x13, 0x00, 0x01, 0x0d, 0x00];   // ctrl+shift… kind 0: plain 'j'
+  if (bindingName(key) !== 'j') throw new Error('key binding parse broken');
+  return true;
+}
+
+try {
+  selftest();
+  for (const n of Object.keys(KEYS)) $('keynames').append(new Option(n));
+} catch (e) {
+  fail(e);
+  for (const b of document.querySelectorAll('button')) b.disabled = true;
+}
+</script>
+</body>
+</html>
