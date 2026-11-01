@@ -363,18 +363,15 @@ async function nagaSetRec(ctr, layer, rec) {
   await nagaTransact(0x00, 0xb3, 0x01, [0]);
 }
 
-async function nagaHello() {
-  return nagaTransact(0x01, null, 0x00, []);
-}
-
 async function nagaSetDpi(x, y) {
   await nagaTransact(0x04, 0x05, 0x07,
     [0, x & 0xff, x >> 8, y & 0xff, y >> 8, 0, 0]);
   await nagaTransact(0x00, 0xb3, 0x01, [0]);
 }
 
+/* No hello command: class 01 is not implemented by this firmware (01/00
+ * answers status 05). The first 02/8C record read is the probe. */
 async function nagaReadAll() {
-  await nagaHello();
   const records = {};
   let ok = 0;
   for (const c of NAGA_CONTROLS) {

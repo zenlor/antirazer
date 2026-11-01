@@ -284,3 +284,6 @@ research log for how that capture was obtained.
 * **Claiming input interfaces** (1, 2) can leave the device without `hidraw`
   nodes until it is re-enumerated. Claim interface 0 only.
 * **Reads after writes** need a short pause; bursts start echoing.
+* **No hello command.** `01/00` is not implemented; the firmware answers
+  status `05`. Probe the config channel by reading a mapping record
+  (`02/8C`) instead.
