@@ -3,6 +3,7 @@
 #include "remap/plan.h"
 #include "remap/run.h"
 #include "remap/config.h"
+#include "remap/hp_map.h"
 
 #include <cJSON.h>
 #include <stdio.h>
@@ -14,12 +15,13 @@ static void usage(FILE *out, const char *prog)
 	fprintf(out,
 		"usage: %s <command> [options]\n"
 		"\n"
-		"Remap a Naga from a JSON map and run sequences host-side.\n"
+		"Remap a Naga or HP mouse from a JSON map and run sequences host-side.\n"
 		"\n"
 		"  validate FILE              parse and check a map\n"
-		"  apply FILE [--dry-run]     2020 only: write single actions and\n"
-		"                             sequence triggers to the mouse\n"
-		"  dump [--output FILE]       2020: write the onboard map as JSON\n"
+		"  apply FILE [--dry-run]     2020 or hp-300: write onboard actions\n"
+		"                             and settings from the map\n"
+		"  dump [--output FILE] [--model 2020|hp-300]\n"
+		"                             export the onboard map as JSON\n"
 		"  run FILE [--device PATH] [--model 2020|2014]\n"
 		"                             grab the mouse and run host-side bindings\n"
 		"  daemon [--config FILE] [--device PATH] [--model 2020|2014]\n"
@@ -28,10 +30,11 @@ static void usage(FILE *out, const char *prog)
 		"\n"
 		"Modifiers: ctrl shift alt super rctrl rshift ralt rsuper, joined by '+'.\n"
 		"Actions:   key, mouse:left|right|middle|back|forward, hypershift,\n"
-		"           turbo:<key>@<ms>, default, macro:<name>.\n"
+		"           turbo:<key>@<ms>, dpi:up|down (2020), dpi:cycle,\n"
+		"           device:<hex> (HP), default, macro:<name>.\n"
 		"Macros:    \"macros\": {\"name\": [{\"key\":\"a\"},{\"delay\":50},\n"
 		"           {\"text\":\"hi\"},{\"mouse\":\"left\"}]}\n"
-		"Wheel:     bindings.normal.wheel-up / wheel-down (host-side).\n"
+		"Wheel:     bindings.normal.wheel-up / wheel-down (host-side, 2020).\n"
 		"\n"
 		"See docs/remap.md for the full format.\n",
 		prog);
@@ -52,6 +55,9 @@ static int parse_model(const char *s, enum remap_device *model)
 		*model = REMAP_DEVICE_2020;
 	else if (!strcmp(s, "2014") || !strcmp(s, "naga-2014"))
 		*model = REMAP_DEVICE_2014;
+	else if (!strcmp(s, "hp-300") || !strcmp(s, "hp") ||
+		 !strcmp(s, "hp-pavilion-300"))
+		*model = REMAP_DEVICE_HP300;
 	else
 		return -1;
 	return 0;
@@ -64,6 +70,8 @@ static const char *model_name(enum remap_device model)
 		return "2020 LH";
 	case REMAP_DEVICE_2014:
 		return "2014";
+	case REMAP_DEVICE_HP300:
+		return "HP Pavilion 300";
 	default:
 		return "auto";
 	}
@@ -136,21 +144,28 @@ static int cmd_apply(const char *path, bool dry_run,
 		     enum remap_device override)
 {
 	struct remap_map map;
+	enum remap_device target;
 	char err[256] = "";
+	int rc;
 
 	if (remap_map_load(path, &map, err, sizeof err) < 0)
 		return fail(err);
-	if (map.device == REMAP_DEVICE_2014 || override == REMAP_DEVICE_2014) {
+	target = override != REMAP_DEVICE_AUTO ? override : map.device;
+	if (target == REMAP_DEVICE_AUTO)
+		target = REMAP_DEVICE_2020;
+	if (target == REMAP_DEVICE_2014) {
 		remap_map_free(&map);
 		return fail("the 2014 has no onboard mapping; use `run`");
 	}
-	if (override == REMAP_DEVICE_2020 || map.device == REMAP_DEVICE_AUTO)
-		map.device = REMAP_DEVICE_2020;
-	if (prepare_map(&map, REMAP_DEVICE_2020, NULL, err, sizeof err) < 0) {
+	if (prepare_map(&map, target, NULL, err, sizeof err) < 0) {
 		remap_map_free(&map);
 		return fail(err);
 	}
-	if (remap_apply(&map, dry_run, err, sizeof err) < 0) {
+	if (target == REMAP_DEVICE_HP300)
+		rc = remap_hp_apply(&map, dry_run, err, sizeof err);
+	else
+		rc = remap_apply(&map, dry_run, err, sizeof err);
+	if (rc < 0) {
 		remap_map_free(&map);
 		return fail(err);
 	}
@@ -158,7 +173,7 @@ static int cmd_apply(const char *path, bool dry_run,
 	return 0;
 }
 
-static int cmd_dump(const char *output)
+static int cmd_dump(const char *output, enum remap_device model)
 {
 	char err[256] = "";
 	FILE *out = stdout;
@@ -166,9 +181,38 @@ static int cmd_dump(const char *output)
 	cJSON *bindings;
 	cJSON *normal;
 	cJSON *hyper;
+	cJSON *match;
 	char *text;
 	int rc;
 
+	if (model == REMAP_DEVICE_HP300) {
+		root = remap_hp_dump(err, sizeof err);
+		if (!root)
+			return fail(err);
+		if (output) {
+			out = fopen(output, "w");
+			if (!out) {
+				cJSON_Delete(root);
+				snprintf(err, sizeof err, "%s: cannot open",
+					 output);
+				return fail(err);
+			}
+		}
+		text = cJSON_Print(root);
+		if (!text) {
+			if (out != stdout)
+				fclose(out);
+			cJSON_Delete(root);
+			return fail("cannot write JSON");
+		}
+		fputs(text, out);
+		fputc('\n', out);
+		cJSON_free(text);
+		if (out != stdout)
+			fclose(out);
+		cJSON_Delete(root);
+		return 0;
+	}
 	rc = naga_open();
 	if (rc != NAGA_OK) {
 		snprintf(err, sizeof err, "open: %s", naga_strerror(rc));
@@ -179,15 +223,21 @@ static int cmd_dump(const char *output)
 	bindings = cJSON_CreateObject();
 	normal = cJSON_CreateObject();
 	hyper = cJSON_CreateObject();
-	if (!root || !bindings || !normal || !hyper) {
+	match = cJSON_CreateObject();
+	if (!root || !bindings || !normal || !hyper || !match) {
 		cJSON_Delete(root);
 		cJSON_Delete(bindings);
 		cJSON_Delete(normal);
 		cJSON_Delete(hyper);
+		cJSON_Delete(match);
 		naga_close();
 		return fail("out of memory");
 	}
+	cJSON_AddItemToObject(root, "version", cJSON_CreateNumber(1));
 	cJSON_AddItemToObject(root, "device", cJSON_CreateString("2020"));
+	cJSON_AddItemToObject(match, "vendorId", cJSON_CreateString("1532"));
+	cJSON_AddItemToObject(match, "productId", cJSON_CreateString("008d"));
+	cJSON_AddItemToObject(root, "match", match);
 	cJSON_AddItemToObject(bindings, "normal", normal);
 	cJSON_AddItemToObject(bindings, "hypershift", hyper);
 	cJSON_AddItemToObject(root, "bindings", bindings);
@@ -209,10 +259,12 @@ static int cmd_dump(const char *output)
 			    rec.type != NAGA_ASSIGN_MOUSE &&
 			    rec.type != NAGA_ASSIGN_HYPERSHIFT &&
 			    rec.type != NAGA_ASSIGN_TURBO &&
+			    rec.type != NAGA_ASSIGN_DPI &&
 			    rec.type != NAGA_ASSIGN_DEFAULT)
 				continue;
 			b.type = rec.type;
-			b.usage = rec.usage;
+			b.usage = rec.type == NAGA_ASSIGN_DPI ? rec.param :
+								rec.usage;
 			b.mod = rec.mod;
 			b.mouse = rec.mouse;
 			if (rec.type == NAGA_ASSIGN_TURBO && rec.rate)
@@ -265,6 +317,11 @@ static int cmd_run(const char *path, const char *evdev,
 	if (prepare_map(&map, override, evdev, err, sizeof err) < 0) {
 		remap_map_free(&map);
 		return fail(err);
+	}
+	if (map.device == REMAP_DEVICE_HP300) {
+		remap_map_free(&map);
+		return fail("host-side run for hp-300 is not implemented yet; "
+			    "use `apply`");
 	}
 	for (size_t i = 0; i < map.count; i++)
 		if (map.bindings[i].host)
@@ -327,6 +384,13 @@ static int cmd_daemon(const char *config, const char *evdev,
 		if (prepare_map(&map, override, evdev, load_err,
 				sizeof load_err) < 0) {
 			fprintf(stderr, "naga-remap: %s\n", load_err);
+			remap_map_free(&map);
+			status = 1;
+			break;
+		}
+		if (map.device == REMAP_DEVICE_HP300) {
+			fprintf(stderr,
+				"naga-remap: host-side run for hp-300 is not implemented yet; use `apply`\n");
 			remap_map_free(&map);
 			status = 1;
 			break;
@@ -424,7 +488,7 @@ int main(int argc, char **argv)
 		return cmd_apply(path, dry_run, model);
 	}
 	if (!strcmp(command, "dump"))
-		return cmd_dump(output);
+		return cmd_dump(output, model);
 	if (!strcmp(command, "run")) {
 		if (!path)
 			return fail("run needs a map file");

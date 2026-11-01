@@ -231,7 +231,16 @@ sudo ./hp-cfg reset                 # replug-free apply
 
 The browser page configures settings and sector bindings through the same
 queue as the Naga page, and exports them in the shared JSON envelope (see
-[docs/remap.md](docs/remap.md)). `research/hp-watch.c` diffs the button
+[docs/remap.md](docs/remap.md)). The CLI applies the same map:
+
+```sh
+naga-remap validate examples/hp-300.json
+naga-remap apply examples/hp-300.json
+naga-remap dump --model hp-300
+```
+
+`apply` writes settings and sectors onboard; host-side `run` for this mouse
+is not implemented yet. `research/hp-watch.c` diffs the button
 sectors live, `research/hp-stage.c` dumps the DPI status frame and
 `research/dis8051.js` is a small 8051 disassembler from the firmware RE.
 
@@ -244,6 +253,9 @@ naga-remap validate examples/naga-2020.json
 naga-remap apply examples/naga-2020.json     # 2020: onboard single actions
 naga-remap run examples/naga-2020.json       # apply + run host-side bindings
 naga-remap run examples/naga-2014.json --model 2014
+naga-remap validate examples/hp-300.json
+naga-remap apply examples/hp-300.json        # HP: onboard sectors + settings
+naga-remap dump --model hp-300               # export the HP map as JSON
 naga-remap daemon                            # reloads on SIGHUP
 ```
 

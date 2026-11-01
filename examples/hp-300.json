@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "device": "hp-300",
+  "match": { "vendorId": "03f0", "productId": "2941" },
+  "bindings": {
+    "normal": {
+      "sector-3": "ctrl+shift+t",
+      "sector-5": "dpi:cycle"
+    }
+  },
+  "settings": {
+    "polling": 1000,
+    "activeSlot": 0
+  }
+}

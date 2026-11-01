@@ -12,6 +12,35 @@ enum remap_device {
 	REMAP_DEVICE_AUTO,
 	REMAP_DEVICE_2020,
 	REMAP_DEVICE_2014,
+	REMAP_DEVICE_HP300,
+};
+
+#define REMAP_HP_SECTORS 8
+
+/* HP's "device function" assignment type (DPI cycle, vendor F-keys). */
+#define REMAP_HP_DEVICE 0x09
+
+struct remap_hp_slot {
+	bool used;	/* the JSON entry set this slot */
+	bool have_enabled;
+	bool enabled;
+	bool have_level;
+	unsigned level;
+	bool have_color;
+	unsigned rgb;	/* 0xRRGGBB */
+};
+
+/* Device-specific settings parsed from the shared envelope. Fields with a
+ * "have_" flag are written; everything else keeps the device's current value. */
+struct remap_hp_settings {
+	bool present;
+	bool have_polling;
+	unsigned polling;
+	bool have_active_slot;
+	unsigned active_slot;
+	bool have_slot_count;
+	unsigned slot_count;
+	struct remap_hp_slot slots[REMAP_HP_SECTORS];
 };
 
 enum remap_step_kind {
@@ -82,6 +111,9 @@ struct remap_map {
 	size_t macro_count;
 	struct remap_trigger *triggers; /* arena */
 	size_t trigger_count;
+	struct remap_hp_settings hp_settings;
+	bool have_dpi;
+	unsigned dpi_x, dpi_y;
 	struct arena arena;
 };
 

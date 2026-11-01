@@ -2,6 +2,7 @@
 #include "remap/map.h"
 
 #include <cJSON.h>
+#include <ctype.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -162,6 +163,37 @@ static int parse_action(const char *text, struct remap_binding *b,
 		}
 		b->type = NAGA_ASSIGN_TURBO;
 		b->turbo_ms = (unsigned)ms;
+		return 0;
+	}
+
+	if (!strcmp(text, "dpi:up")) {
+		b->type = NAGA_ASSIGN_DPI;
+		b->usage = 1;
+		return 0;
+	}
+	if (!strcmp(text, "dpi:down")) {
+		b->type = NAGA_ASSIGN_DPI;
+		b->usage = 2;
+		return 0;
+	}
+	if (!strcmp(text, "dpi:cycle")) {
+		b->type = REMAP_HP_DEVICE;
+		b->usage = 4;
+		return 0;
+	}
+	if (!strncmp(text, "device:", 7)) {
+		char *end;
+		unsigned long fn;
+
+		errno = 0;
+		fn = strtoul(text + 7, &end, 16);
+		if (errno || *end || fn > 0xff) {
+			seterr(err, errlen,
+			       "device:<hex> needs a function id 0..ff");
+			return -1;
+		}
+		b->type = REMAP_HP_DEVICE;
+		b->usage = (unsigned)fn;
 		return 0;
 	}
 
@@ -586,6 +618,154 @@ static int parse_triggers(struct remap_map *map, cJSON *root, char *err,
 	return 0;
 }
 
+static int parse_color(cJSON *v, unsigned *out)
+{
+	const char *s = jstr(v);
+	unsigned value;
+
+	if (!s)
+		return -1;
+	if (*s == '#')
+		s++;
+	if (strlen(s) != 6)
+		return -1;
+	for (int i = 0; i < 6; i++)
+		if (!isxdigit((unsigned char)s[i]))
+			return -1;
+	value = (unsigned)strtoul(s, NULL, 16);
+	*out = value;
+	return 0;
+}
+
+/*
+ * settings is optional and device-owned. The shared envelope lets a driver
+ * ignore keys it does not implement; only the selected device's section is
+ * parsed here.
+ */
+static int parse_settings(struct remap_map *map, cJSON *root, char *err,
+			  size_t errlen)
+{
+	cJSON *settings = member(root, "settings");
+	cJSON *v;
+
+	if (!settings)
+		return 0;
+	if (!cJSON_IsObject(settings)) {
+		seterr(err, errlen, "\"settings\" must be an object");
+		return -1;
+	}
+
+	if (map->device == REMAP_DEVICE_HP300) {
+		struct remap_hp_settings *hp = &map->hp_settings;
+
+		hp->present = true;
+		if ((v = member(settings, "polling"))) {
+			if (get_uint(v, 1000, &hp->polling) < 0 ||
+			    (hp->polling != 125 && hp->polling != 250 &&
+			     hp->polling != 500 && hp->polling != 1000)) {
+				seterr(err, errlen,
+				       "polling must be 125, 250, 500 or 1000");
+				return -1;
+			}
+			hp->have_polling = true;
+		}
+		if ((v = member(settings, "activeSlot"))) {
+			if (get_uint(v, REMAP_HP_SECTORS - 1,
+				     &hp->active_slot) < 0) {
+				seterr(err, errlen,
+				       "activeSlot must be 0..%d",
+				       REMAP_HP_SECTORS - 1);
+				return -1;
+			}
+			hp->have_active_slot = true;
+		}
+		if ((v = member(settings, "slotCount"))) {
+			if (get_uint(v, REMAP_HP_SECTORS, &hp->slot_count) <
+				0 ||
+			    hp->slot_count < 1) {
+				seterr(err, errlen,
+				       "slotCount must be 1..%d",
+				       REMAP_HP_SECTORS);
+				return -1;
+			}
+			hp->have_slot_count = true;
+		}
+		if ((v = member(settings, "slots"))) {
+			cJSON *item;
+			size_t index = 0;
+
+			if (!cJSON_IsArray(v)) {
+				seterr(err, errlen, "slots must be an array");
+				return -1;
+			}
+			if ((size_t)cJSON_GetArraySize(v) > REMAP_HP_SECTORS) {
+				seterr(err, errlen, "too many slots (max %d)",
+				       REMAP_HP_SECTORS);
+				return -1;
+			}
+			cJSON_ArrayForEach(item, v) {
+				struct remap_hp_slot *slot =
+				    &hp->slots[index];
+				cJSON *f;
+
+				index++;
+				if (!cJSON_IsObject(item)) {
+					seterr(err, errlen,
+					       "slot entries must be objects");
+					return -1;
+				}
+				slot->used = true;
+				if ((f = member(item, "enabled"))) {
+					if (!cJSON_IsBool(f)) {
+						seterr(err, errlen,
+						       "slot enabled must be true/false");
+						return -1;
+					}
+					slot->have_enabled = true;
+					slot->enabled = cJSON_IsTrue(f);
+				}
+				if ((f = member(item, "level"))) {
+					if (get_uint(f, 8, &slot->level) < 0) {
+						seterr(err, errlen,
+						       "slot level must be 0..8");
+						return -1;
+					}
+					slot->have_level = true;
+				}
+				if ((f = member(item, "color"))) {
+					if (parse_color(f, &slot->rgb) < 0) {
+						seterr(err, errlen,
+						       "slot color must be #rrggbb");
+						return -1;
+					}
+					slot->have_color = true;
+				}
+			}
+		}
+		return 0;
+	}
+
+	if (map->device == REMAP_DEVICE_2020) {
+		cJSON *dpi = member(settings, "dpi");
+
+		if (!dpi)
+			return 0;
+		if (!cJSON_IsObject(dpi)) {
+			seterr(err, errlen, "settings.dpi must be an object");
+			return -1;
+		}
+		if (!(v = member(dpi, "x")) || get_uint(v, 16000, &map->dpi_x) < 0 ||
+		    map->dpi_x < 100 || !(v = member(dpi, "y")) ||
+		    get_uint(v, 16000, &map->dpi_y) < 0 || map->dpi_y < 100) {
+			seterr(err, errlen,
+			       "settings.dpi needs x and y in 100..16000");
+			return -1;
+		}
+		map->have_dpi = true;
+	}
+	return 0;
+}
+
 int remap_map_load_string(const char *text, struct remap_map *map, char *err,
 			  size_t errlen)
 {
@@ -616,15 +796,29 @@ int remap_map_load_string(const char *text, struct remap_map *map, char *err,
 			map->device = REMAP_DEVICE_2020;
 		else if (!strcmp(s, "2014") || !strcmp(s, "naga-2014"))
 			map->device = REMAP_DEVICE_2014;
+		else if (!strcmp(s, "hp-300") || !strcmp(s, "hp-pavilion-300") ||
+			 !strcmp(s, "hp"))
+			map->device = REMAP_DEVICE_HP300;
 		else {
 			seterr(err, errlen, "unknown device \"%s\"", s);
+			goto fail_root;
+		}
+	}
+	{
+		cJSON *version = member(root, "version");
+
+		if (version &&
+		    (!cJSON_IsNumber(version) || version->valuedouble != 1)) {
+			seterr(err, errlen,
+			       "unsupported map version (expected 1)");
 			goto fail_root;
 		}
 	}
 
 	if (parse_macros(map, root, err, errlen) < 0 ||
 	    parse_triggers(map, root, err, errlen) < 0 ||
-	    parse_bindings(map, root, err, errlen) < 0)
+	    parse_bindings(map, root, err, errlen) < 0 ||
+	    parse_settings(map, root, err, errlen) < 0)
 		goto fail_root;
 
 	cJSON_Delete(root);
@@ -773,6 +967,43 @@ int remap_map_validate(struct remap_map *map, char *err, size_t errlen)
 				       "wheel up/down support key, mouse or macro");
 				return -1;
 			}
+		} else if (map->device == REMAP_DEVICE_HP300) {
+			char *end;
+			unsigned long sector;
+
+			if (b->layer != 0 && b->layer != 1) {
+				seterr(err, errlen, "bad layer for \"%s\"",
+				       b->id);
+				return -1;
+			}
+			if (strncmp(b->id, "sector-", 7)) {
+				seterr(err, errlen,
+				       "hp-300 ids are sector-0..sector-%d, not \"%s\"",
+				       REMAP_HP_SECTORS - 1, b->id);
+				return -1;
+			}
+			errno = 0;
+			sector = strtoul(b->id + 7, &end, 10);
+			if (errno || *end || sector >= REMAP_HP_SECTORS) {
+				seterr(err, errlen, "unknown HP sector \"%s\"",
+				       b->id);
+				return -1;
+			}
+			b->ctr = (unsigned)sector;
+			if (b->is_sequence) {
+				seterr(err, errlen,
+				       "hp-300 has no host-side macro support yet");
+				return -1;
+			}
+			if (b->type != NAGA_ASSIGN_KEY &&
+			    b->type != NAGA_ASSIGN_MOUSE &&
+			    b->type != REMAP_HP_DEVICE &&
+			    b->type != NAGA_ASSIGN_DEFAULT) {
+				seterr(err, errlen,
+				       "unsupported HP action for \"%s\"",
+				       b->id);
+				return -1;
+			}
 		} else if (map->device == REMAP_DEVICE_2020) {
 			if (b->layer != 0 && b->layer != 1) {
 				seterr(err, errlen, "bad layer for \"%s\"",
@@ -797,6 +1028,7 @@ int remap_map_validate(struct remap_map *map, char *err, size_t errlen)
 				    b->type != NAGA_ASSIGN_MOUSE &&
 				    b->type != NAGA_ASSIGN_HYPERSHIFT &&
 				    b->type != NAGA_ASSIGN_TURBO &&
+				    b->type != NAGA_ASSIGN_DPI &&
 				    b->type != NAGA_ASSIGN_DEFAULT) {
 					seterr(err, errlen,
 					       "unsupported action for \"%s\"",
@@ -831,7 +1063,8 @@ int remap_map_validate(struct remap_map *map, char *err, size_t errlen)
 		for (size_t j = 0; j < i; j++) {
 			const struct remap_binding *o = &map->bindings[j];
 
-			if (map->device == REMAP_DEVICE_2020) {
+			if (map->device == REMAP_DEVICE_2020 ||
+			    map->device == REMAP_DEVICE_HP300) {
 				if (o->ctr == b->ctr && o->layer == b->layer) {
 					seterr(err, errlen,
 					       "duplicate binding %s@%d",
@@ -848,7 +1081,13 @@ int remap_map_validate(struct remap_map *map, char *err, size_t errlen)
 
 	for (size_t i = 0; i < map->trigger_count; i++) {
 		const struct remap_trigger *t = &map->triggers[i];
-		struct remap_binding *b = find_binding(map, t->id, t->layer);
+		struct remap_binding *b;
+
+		/* HP has no trigger-key path yet; the section is accepted and
+		 * ignored so the same envelope can be loaded. */
+		if (map->device == REMAP_DEVICE_HP300)
+			continue;
+		b = find_binding(map, t->id, t->layer);
 
 		if (!b) {
 			seterr(err, errlen,
@@ -910,6 +1149,9 @@ static const char *default_2014_trigger(const char *id)
 int remap_map_assign_triggers(struct remap_map *map, char *err, size_t errlen)
 {
 	unsigned next_fkey = 0x68; /* F13 */
+
+	if (map->device == REMAP_DEVICE_HP300)
+		return 0;
 
 	for (size_t i = 0; i < map->count; i++) {
 		struct remap_binding *b = &map->bindings[i];
@@ -1054,6 +1296,13 @@ void remap_binding_string(const struct remap_binding *b, char *buf, size_t len)
 		snprintf(buf, len, "macro:%s", b->macro);
 		return;
 	}
+	if (b->type == REMAP_HP_DEVICE) {
+		if (b->usage == 4)
+			snprintf(buf, len, "dpi:cycle");
+		else
+			snprintf(buf, len, "device:0x%02x", b->usage);
+		return;
+	}
 	switch (b->type) {
 	case NAGA_ASSIGN_KEY:
 		remap_key_combo(b->mod, b->usage, buf, len);
@@ -1071,6 +1320,14 @@ void remap_binding_string(const struct remap_binding *b, char *buf, size_t len)
 		remap_key_combo(b->mod, b->usage, combo, sizeof combo);
 		snprintf(buf, len, "turbo:%s@%u", combo, b->turbo_ms);
 		break;
+	case NAGA_ASSIGN_DPI:
+		if (b->usage == 1)
+			snprintf(buf, len, "dpi:up");
+		else if (b->usage == 2)
+			snprintf(buf, len, "dpi:down");
+		else
+			snprintf(buf, len, "dpi:%02x", b->usage);
+		break;
 	case NAGA_ASSIGN_DEFAULT:
 		snprintf(buf, len, "default");
 		break;
@@ -1085,6 +1342,11 @@ int remap_apply(const struct remap_map *map, bool dry_run, char *err,
 {
 	size_t sequences = 0;
 
+	if (map->device == REMAP_DEVICE_HP300) {
+		seterr(err, errlen,
+		       "hp-300 is applied through the HP driver (remap_hp_apply)");
+		return -1;
+	}
 	if (map->device != REMAP_DEVICE_2020) {
 		seterr(err, errlen,
 		       "apply only works on the 2020 LH (1532:008d); "
@@ -1148,6 +1410,10 @@ int remap_apply(const struct remap_map *map, bool dry_run, char *err,
 				rc = naga_set_turbo(b->ctr, b->usage, b->mod,
 						    b->turbo_ms);
 				break;
+			case NAGA_ASSIGN_DPI:
+				rc = naga_set_dpi_action(b->ctr, b->usage,
+							 (unsigned)b->layer);
+				break;
 			case NAGA_ASSIGN_DEFAULT:
 				rc = naga_set_default(b->ctr,
 						      (unsigned)b->layer);
@@ -1166,6 +1432,20 @@ int remap_apply(const struct remap_map *map, bool dry_run, char *err,
 		}
 	}
 
+	if (map->have_dpi) {
+		int rc = NAGA_OK;
+
+		printf("%s DPI %ux%u\n", dry_run ? "would set" : "set",
+		       map->dpi_x, map->dpi_y);
+		if (!dry_run)
+			rc = naga_set_dpi(map->dpi_x, map->dpi_y);
+		if (rc != NAGA_OK) {
+			seterr(err, errlen, "DPI: %s", naga_strerror(rc));
+			if (!dry_run)
+				naga_close();
+			return -1;
+		}
+	}
 	if (!dry_run)
 		naga_close();
 	printf("%s %zu binding(s)%s\n", dry_run ? "validated" : "applied",

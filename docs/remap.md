@@ -143,10 +143,9 @@ controls it reads but does not draw.
 Wheel bindings support keys, mouse buttons and macros. `hypershift`, `turbo`
 and `default` are onboard-only.
 
-The browser can stage every action above. The CLI parser currently implements
-the 2020 subset and the HP driver is the next phase (see the support table
-below), so a map containing `dpi:*` or HP ids is a valid web file before it is
-accepted by `naga-remap validate`.
+The browser accepts every action above, and so does `naga-remap`: `apply`
+writes `dpi:*`/`device:*` actions onboard, and `dump` emits the same spelling
+back. HP host-side `run` is the remaining gap (see the support table below).
 
 ### Settings
 
@@ -282,16 +281,17 @@ The HP page is gone; `/hp.html` redirects to the unified page. Append
 |---|---|---|---|
 | 2020 LH | yes | yes | yes |
 | 2014 | yes | no (no onboard map) | yes |
-| HP Pavilion 300 | web export only | HP driver next phase | HP driver next phase |
+| HP Pavilion 300 | yes | yes (settings + sectors) | no (host-side next phase) |
 
-The JSON envelope is already shared; the web page emits `hp-300`, `dpi:*`
-and HP `settings` today. The CLI reports them as unsupported until the HP
-driver lands, so files do not need to be rewritten when it does.
+The JSON envelope is shared; the web page and `naga-remap` read and write the
+same `hp-300` bindings, `settings` and `backup` sections. HP `run`/`daemon`
+still stop with a clear error — onboard `apply` is the supported path.
 
 ## Requirements and limits
 
-* `apply`/`dump` use the normal libusb path; the udev rule from the README is
-  enough.
+* `apply`/`dump` for the 2020 use libusb; hp-300 uses the FF32 hidraw node.
+  The udev rule from the README is enough for the 2020; the HP needs read/write
+  access to its hidraw device (close other configurators first).
 * `run`/`daemon` grab evdev nodes and create uinput devices: root (or
   `uinput` + event-node access) is required.
 * Macro triggers are swallowed, so don't also use F13–F24 on the 2020 for
@@ -305,9 +305,9 @@ driver lands, so files do not need to be rewritten when it does.
   onboard remapping; `run` is the only option.
 * HP sector 5 is also the onboard DPI button: pressing it re-applies factory
   bindings until the next replug, even after a successful custom write.
-* The HP shift layer and the sector↔physical-button map are only partly
-  decoded; the page shows the shift layer read-only and labels unconfirmed
-  sectors. Host-side HP remapping (`run`) waits on that mapping.
+* HP host-side remapping in `run`/`daemon` is not implemented yet; use
+  `apply` to write the onboard actions and settings. The sector↔physical
+  mapping is still partial, so host-side ids are not stable enough to grab.
 
 The parser and planner allocate from one arena per map/plan; the JSON parser
 is the vendored cJSON. cJSON and cimgui/ImGui are built from `vendor/`.

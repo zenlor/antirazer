@@ -59,7 +59,8 @@ CORE_OBJS := $(BUILD)/naga.o $(BUILD)/naga_keys.o $(BUILD)/naga_ctrls.o
 
 REMAP_OBJS := $(BUILD)/remap_main.o $(BUILD)/remap_map.o \
               $(BUILD)/remap_plan.o $(BUILD)/remap_run.o \
-              $(BUILD)/remap_arena.o $(BUILD)/remap_config.o
+              $(BUILD)/remap_arena.o $(BUILD)/remap_config.o \
+              $(BUILD)/remap_hp.o $(BUILD)/hp.o
 
 TOOLS := naga-probe evtap bench-remap
 
@@ -97,6 +98,9 @@ $(BUILD)/remap_arena.o: src/remap/arena.c | $(BUILD)
 
 $(BUILD)/remap_config.o: src/remap/config.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/remap_hp.o: src/remap/hp.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(CJSON_CFLAGS) -c $< -o $@
 
 $(BUILD)/remap_map.o: src/remap/map.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(CJSON_CFLAGS) -c $< -o $@

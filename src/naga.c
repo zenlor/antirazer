@@ -254,6 +254,15 @@ int naga_set_default(unsigned ctr, unsigned layer)
 	return write_record(ctr, layer, NAGA_ASSIGN_DEFAULT, none, 0);
 }
 
+int naga_set_dpi_action(unsigned ctr, unsigned direction, unsigned layer)
+{
+	const unsigned char data[1] = {(unsigned char)direction};
+
+	if (direction != 1 && direction != 2)
+		return NAGA_ERR_INVALID;
+	return write_record(ctr, layer, NAGA_ASSIGN_DPI, data, sizeof data);
+}
+
 int naga_set_turbo(unsigned ctr, unsigned usage, unsigned mod, unsigned delay_ms)
 {
 	unsigned char data[4];

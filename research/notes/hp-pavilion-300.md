@@ -182,8 +182,8 @@ Naga page; `site/hp.html` only redirects to it. Still open:
 
 * the physical mapping of sectors 0–2 and 4/6/7 (3 and 5 are confirmed);
 * the shift layer's activation (the page shows it read-only);
-* host-side HP remapping in `naga-remap run` — the JSON envelope already
-  carries `hp-300`, but the CLI driver is a separate phase;
+* host-side HP remapping in `naga-remap run` — onboard `apply`/`dump` for
+  `hp-300` are implemented; `run` is the remaining phase;
 * LED/RGB behaviour (fields decoded, firmware ignores the LED mode byte);
 * per-slot DPI levels and colours are editable in the page now, but still
   apply only at the next replug.

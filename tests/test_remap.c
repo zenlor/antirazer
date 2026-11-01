@@ -71,6 +71,31 @@ static const char *map_wheel =
     "  }\n"
     "}\n";
 
+static const char *map_hp =
+    "{\n"
+    "  \"version\": 1,\n"
+    "  \"device\": \"hp-300\",\n"
+    "  \"match\": { \"vendorId\": \"03f0\", \"productId\": \"2941\" },\n"
+    "  \"bindings\": {\n"
+    "    \"normal\": {\n"
+    "      \"sector-0\": \"mouse:back\",\n"
+    "      \"sector-3\": \"shift+x\",\n"
+    "      \"sector-5\": \"dpi:cycle\"\n"
+    "    },\n"
+    "    \"hypershift\": { \"sector-5\": \"device:0a\" }\n"
+    "  },\n"
+    "  \"settings\": {\n"
+    "    \"polling\": 500,\n"
+    "    \"activeSlot\": 1,\n"
+    "    \"slotCount\": 4,\n"
+    "    \"slots\": [\n"
+    "      { \"enabled\": true, \"level\": 2, \"color\": \"#ff0000\" }\n"
+    "    ]\n"
+    "  },\n"
+    "  \"triggers\": { \"normal\": { \"sector-3\": \"f13\" } },\n"
+    "  \"backup\": { \"settings\": \"00\", \"sectors\": [] }\n"
+    "}\n";
+
 static void load_ok(const char *json, struct remap_map *map)
 {
 	char err[256] = "";
@@ -318,6 +343,94 @@ static void expect_validate_fail(const char *json, enum remap_device model)
 	remap_map_free(&map);
 }
 
+static void test_hp_map(void)
+{
+	struct remap_map map;
+	struct remap_binding *b;
+	char value[96];
+
+	load_ok(map_hp, &map);
+	prepare_ok(&map, REMAP_DEVICE_HP300);
+	if (failures)
+		goto out;
+
+	CHECK(map.count == 4);
+	CHECK(map.hp_settings.present);
+	CHECK(map.hp_settings.have_polling && map.hp_settings.polling == 500);
+	CHECK(map.hp_settings.have_active_slot &&
+	      map.hp_settings.active_slot == 1);
+	CHECK(map.hp_settings.have_slot_count &&
+	      map.hp_settings.slot_count == 4);
+	CHECK(map.hp_settings.slots[0].used);
+	CHECK(map.hp_settings.slots[0].have_enabled &&
+	      map.hp_settings.slots[0].enabled);
+	CHECK(map.hp_settings.slots[0].have_level &&
+	      map.hp_settings.slots[0].level == 2);
+	CHECK(map.hp_settings.slots[0].have_color &&
+	      map.hp_settings.slots[0].rgb == 0xff0000);
+
+	b = find_binding(&map, "sector-0", 0);
+	CHECK(b && b->ctr == 0 && b->type == NAGA_ASSIGN_MOUSE &&
+	      b->mouse == NAGA_MOUSE_BACK);
+	b = find_binding(&map, "sector-3", 0);
+	CHECK(b && b->ctr == 3 && b->type == NAGA_ASSIGN_KEY &&
+	      b->usage == 0x1b && b->mod == 0x02);
+	if (b) {
+		remap_binding_string(b, value, sizeof value);
+		CHECK(!strcmp(value, "shift+x"));
+	}
+	b = find_binding(&map, "sector-5", 0);
+	CHECK(b && b->type == REMAP_HP_DEVICE && b->usage == 4);
+	if (b) {
+		remap_binding_string(b, value, sizeof value);
+		CHECK(!strcmp(value, "dpi:cycle"));
+	}
+	b = find_binding(&map, "sector-5", 1);
+	CHECK(b && b->type == REMAP_HP_DEVICE && b->usage == 0x0a);
+	if (b) {
+		remap_binding_string(b, value, sizeof value);
+		CHECK(!strcmp(value, "device:0x0a"));
+	}
+	CHECK(map.trigger_count == 1); /* accepted and ignored for HP */
+
+out:
+	remap_map_free(&map);
+}
+
+static void test_naga_dpi_action(void)
+{
+	struct remap_map map;
+	struct remap_binding *b;
+	char value[96];
+
+	load_ok("{\"version\":1,\"device\":\"2020\",\"bindings\":{"
+		"\"normal\":{\"1\":\"dpi:up\"},"
+		"\"hypershift\":{\"2\":\"dpi:down\"}},"
+		"\"settings\":{\"dpi\":{\"x\":2400,\"y\":1600}},"
+		"\"backup\":{\"records\":{}}}",
+		&map);
+	prepare_ok(&map, REMAP_DEVICE_2020);
+	if (failures)
+		goto out;
+
+	CHECK(map.have_dpi && map.dpi_x == 2400 && map.dpi_y == 1600);
+	b = find_binding(&map, "1", 0);
+	CHECK(b && b->type == NAGA_ASSIGN_DPI && b->usage == 1);
+	if (b) {
+		remap_binding_string(b, value, sizeof value);
+		CHECK(!strcmp(value, "dpi:up"));
+	}
+	b = find_binding(&map, "2", 1);
+	CHECK(b && b->type == NAGA_ASSIGN_DPI && b->usage == 2);
+	if (b) {
+		remap_binding_string(b, value, sizeof value);
+		CHECK(!strcmp(value, "dpi:down"));
+	}
+
+out:
+	remap_map_free(&map);
+}
+
 static void test_invalid(void)
 {
 	expect_load_fail("{\"bindings\":{\"normal\":{\"1\":\"bogus\"}}}");
@@ -359,6 +472,30 @@ static void test_invalid(void)
 	expect_validate_fail("{\"device\":\"2020\",\"bindings\":{\"normal\":"
 			     "{\"wheel-up\":\"turbo:f5@100\"}}}",
 			     REMAP_DEVICE_2020);
+	expect_validate_fail("{\"device\":\"hp-300\",\"bindings\":{\"normal\":"
+			     "{\"1\":\"x\"}}}",
+			     REMAP_DEVICE_HP300);
+	expect_validate_fail("{\"device\":\"hp-300\",\"bindings\":{\"normal\":"
+			     "{\"sector-8\":\"x\"}}}",
+			     REMAP_DEVICE_HP300);
+	expect_validate_fail("{\"device\":\"hp-300\",\"bindings\":{\"normal\":"
+			     "{\"sector-3\":\"dpi:up\"}}}",
+			     REMAP_DEVICE_HP300);
+	expect_validate_fail("{\"device\":\"hp-300\",\"bindings\":{\"normal\":"
+			     "{\"sector-3\":\"hypershift\"}}}",
+			     REMAP_DEVICE_HP300);
+	expect_validate_fail("{\"device\":\"hp-300\",\"bindings\":{\"normal\":"
+			     "{\"sector-3\":\"macro:m\"}},"
+			     "\"macros\":{\"m\":[{\"key\":\"a\"}]}}",
+			     REMAP_DEVICE_HP300);
+	expect_load_fail("{\"version\":2,\"device\":\"2020\","
+			 "\"bindings\":{\"normal\":{\"1\":\"x\"}}}");
+	expect_load_fail("{\"device\":\"hp-300\",\"bindings\":{\"normal\":"
+			 "{\"sector-3\":\"x\"}},\"settings\":"
+			 "{\"polling\":300}}");
+	expect_load_fail("{\"device\":\"hp-300\",\"bindings\":{\"normal\":"
+			 "{\"sector-3\":\"x\"}},\"settings\":{\"slots\":"
+			 "[{\"color\":\"red\"}]}}");
 }
 
 static void test_key_mapping(void)
@@ -381,6 +518,8 @@ int main(void)
 	test_single_plan();
 	test_default_trigger();
 	test_host_wheel();
+	test_hp_map();
+	test_naga_dpi_action();
 	test_invalid();
 	test_key_mapping();
 

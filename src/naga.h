@@ -122,6 +122,9 @@ int naga_set_hypershift(unsigned ctr, unsigned layer);
 /* Write + commit the device-default action for <ctr> in <layer>. */
 int naga_set_default(unsigned ctr, unsigned layer);
 
+/* Write + commit a DPI up/down action (direction 1 = up, 2 = down). */
+int naga_set_dpi_action(unsigned ctr, unsigned direction, unsigned layer);
+
 /* Write + commit a DPI value in counts per inch. */
 int naga_set_dpi(unsigned x, unsigned y);
 
