@@ -251,6 +251,29 @@ main {
 .qitem button { padding: .12rem .45rem; font-size: .78rem; }
 #queueMsg { margin-top: .45rem; font-size: .8rem; min-height: 1.2em; }
 
+.profileBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .4rem;
+  padding: .1rem 0 .55rem;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: .5rem;
+}
+.profileBar label { color: var(--muted); font-size: .8rem; }
+.profileBar select,
+.profileBar input {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  border-radius: 5px;
+  padding: .18rem .35rem;
+}
+.profileBar select { min-width: 12rem; }
+.profileBar input { min-width: 12rem; }
+.profileBar #profileMsg { font-size: .8rem; }
+
 /* ---- selftest -------------------------------------------------------- */
 
 .selftest { margin: 0 1rem .8rem; font-size: .84rem; }

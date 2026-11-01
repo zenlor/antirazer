@@ -22,6 +22,7 @@ const HP_SEC_BASE = 0xc000, HP_SEC_COUNT = 8;
 
 const QUEUE_KEY = 'antirazer.queue.v1';
 const BACKUP_KEY = 'antirazer.backup.v1';
+const PROFILES_KEY = 'antirazer.profiles.v1';
 const ACTIVE_KEY = 'antirazer.device';
 
 /* HID usages, ported from src/naga_keys.c */
@@ -162,6 +163,28 @@ function defaultQueue() {
   return { version: 1, naga: { readAt: 0, edits: [] }, hp: { readAt: 0, edits: [] } };
 }
 
+function defaultProfiles() {
+  return { version: 1, naga: [], hp: [], selected: { naga: null, hp: null } };
+}
+
+function loadProfiles() {
+  const p = readStore(PROFILES_KEY, null) || {};
+  const out = defaultProfiles();
+  for (const k of ['naga', 'hp']) {
+    if (!Array.isArray(p[k])) continue;
+    out[k] = p[k].filter((prof) =>
+      prof && typeof prof.id === 'string' && typeof prof.name === 'string' &&
+      prof.data && typeof prof.data === 'object');
+  }
+  if (p.selected && typeof p.selected === 'object') {
+    for (const k of ['naga', 'hp'])
+      if (typeof p.selected[k] === 'string' &&
+          out[k].some((prof) => prof.id === p.selected[k]))
+        out.selected[k] = p.selected[k];
+  }
+  return out;
+}
+
 function loadQueue() {
   const q = readStore(QUEUE_KEY, null) || {};
   const out = defaultQueue();
@@ -184,9 +207,13 @@ const state = {
   dpi: { x: 1600, y: 1600 },
   queue: loadQueue(),
   backups: readStore(BACKUP_KEY, {}),
+  profiles: loadProfiles(),
+  profileSelected: { naga: null, hp: null },
+  profileSig: null,
   selfTest: [],
   ready: false,
 };
+state.profileSelected = Object.assign({ naga: null, hp: null }, state.profiles.selected || {});
 if (!state.queue[state.active]) state.active = 'naga';
 if (!state.layers[state.active]) state.layers[state.active] = 0;
 
@@ -761,6 +788,7 @@ function renderAll() {
   renderSettings();
   renderInspector();
   renderQueue();
+  renderProfiles();
   updateButtons();
 }
 
@@ -1346,6 +1374,59 @@ function settingsDiff(before, after) {
   return parts.join(', ') || 'settings';
 }
 
+function profileDate(ms) {
+  const d = new Date(ms || 0);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString(undefined, {
+    year: '2-digit', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function profileById(key, id) {
+  return state.profiles[key].find((p) => p.id === id) || null;
+}
+
+function saveProfiles() {
+  state.profiles.selected = { ...state.profileSelected };
+  writeStore(PROFILES_KEY, state.profiles);
+}
+
+function renderProfiles() {
+  const key = state.active;
+  const list = state.profiles[key];
+  const sel = $('profileSelect');
+  const name = $('profileName');
+  const want = state.profileSelected[key];
+
+  sel.replaceChildren();
+  if (!list.length) {
+    sel.appendChild(new Option('no profiles saved', ''));
+  } else {
+    sel.appendChild(new Option('— select profile —', ''));
+    for (const p of [...list].sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0)))
+      sel.appendChild(new Option(p.name + ' · ' + profileDate(p.savedAt), p.id));
+  }
+  if (want && list.some((p) => p.id === want)) sel.value = want;
+  else {
+    sel.value = '';
+    if (want) state.profileSelected[key] = null;
+  }
+
+  const current = profileById(key, sel.value);
+  const sig = key + ':' + sel.value;
+  if (state.profileSig !== sig) {
+    state.profileSig = sig;
+    name.value = current ? current.name : '';
+  }
+  $('profileSave').disabled = !activeBaseline();
+  $('profileLoad').disabled = !sel.value || !activeBaseline();
+  $('profileDelete').disabled = !sel.value;
+  $('profileMsg').textContent = !activeBaseline()
+    ? 'read the device to save or load'
+    : current ? 'saved ' + profileDate(current.savedAt) : '';
+}
+
 function renderQueue() {
   const list = $('queueList');
   list.replaceChildren();
@@ -1564,6 +1645,183 @@ function downloadJson() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     setQueueMsg('downloaded ' + DEVICES[key].jsonDevice + '.json');
   } catch (e) { showError(e); }
+}
+
+/* ---- named profiles --------------------------------------------------- */
+
+function newProfileId() {
+  return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function saveProfile() {
+  const key = state.active;
+  if (!state.baseline[key]) return showError(new Error('read the device before saving a profile'));
+  const list = state.profiles[key];
+  let name = $('profileName').value.trim().replace(/\s+/g, ' ').slice(0, 48);
+  if (!name) name = 'profile ' + (list.length + 1);
+  let data;
+  try { data = buildJson(key); } catch (e) { return showError(e); }
+  delete data.backup; /* a profile is a config, not a raw backup */
+  let prof = list.find((p) => p.name.toLowerCase() === name.toLowerCase());
+  const existed = !!prof;
+  if (!prof) {
+    prof = { id: newProfileId(), name, savedAt: Date.now(), data };
+    list.push(prof);
+  } else {
+    prof.name = name;
+    prof.data = data;
+    prof.savedAt = Date.now();
+  }
+  state.profileSelected[key] = prof.id;
+  state.profileSig = null;
+  saveProfiles();
+  renderAll();
+  setQueueMsg((existed ? 'updated' : 'saved') + ' profile "' + name + '"');
+}
+
+function loadProfile() {
+  const key = state.active;
+  const id = $('profileSelect').value;
+  const prof = profileById(key, id);
+  if (!prof) return showError(new Error('select a profile first'));
+  if (!state.baseline[key])
+    return showError(new Error('connect and read ' + DEVICES[key].label + ' first'));
+  try {
+    applyProfileData(key, prof.data);
+    state.profileSelected[key] = prof.id;
+    state.profileSig = null;
+    saveProfiles();
+    renderAll();
+    setQueueMsg('loaded profile "' + prof.name + '" — review, then Push changes');
+  } catch (e) { showError(e); }
+}
+
+function deleteProfile() {
+  const key = state.active;
+  const id = $('profileSelect').value;
+  const list = state.profiles[key];
+  const i = list.findIndex((p) => p.id === id);
+  if (i < 0) return showError(new Error('select a profile first'));
+  const prof = list.splice(i, 1)[0];
+  if (state.profileSelected[key] === id) state.profileSelected[key] = null;
+  state.profileSig = null;
+  saveProfiles();
+  renderAll();
+  setQueueMsg('deleted profile "' + prof.name + '"');
+}
+
+/* Stage every difference between a saved profile and the current read.
+ * Nothing is written to the mouse; the normal Push path applies it. */
+function applyProfileData(key, data) {
+  if (!data || data.version != null && data.version !== 1)
+    throw new Error('unsupported profile version');
+  if (data.device !== DEVICES[key].jsonDevice)
+    throw new Error('profile is for "' + data.device + '", not "' +
+      DEVICES[key].jsonDevice + '"');
+  if (key !== state.active) throw new Error('switch to the profile device first');
+  const q = state.queue[key];
+  const old = q.edits;
+  q.edits = [];
+  try {
+    if (key === 'naga') applyNagaProfile(data);
+    else applyHpProfile(data);
+  } catch (e) {
+    q.edits = old;
+    saveQueue();
+    throw e;
+  }
+  saveQueue();
+}
+
+function applyNagaProfile(data) {
+  const bindings = data.bindings || {};
+  const sections = [bindings.normal || {}, bindings.hypershift || {}];
+
+  for (const c of NAGA_CONTROLS) {
+    if (c.host) {
+      const value = sections[0][c.json];
+      if (value == null) continue;
+      stageEdit({
+        key: 'naga:host:' + c.id, kind: 'host',
+        target: { kind: 'host', id: c.id },
+        label: c.name + ' (host)',
+        before: nagaEffectiveHost(c.id),
+        after: nagaHostFromText(value),
+      }, true);
+      continue;
+    }
+    for (const layer of [0, 1]) {
+      const value = sections[layer][c.json];
+      if (value == null) continue;
+      stageEdit({
+        key: 'naga:rec:' + c.ctr + '@' + layer, kind: 'onboard',
+        target: { kind: 'rec', ctr: c.ctr, layer },
+        label: c.name + (layer ? ' · hypershift' : ''),
+        before: nagaEffectiveRec(c.ctr, layer),
+        after: nagaParseActionText(value),
+      }, true);
+    }
+  }
+
+  if (data.settings && data.settings.dpi) {
+    const before = nagaEffectiveDpi();
+    const x = Math.max(100, Math.min(16000,
+      Number(data.settings.dpi.x) || before.x));
+    const y = Math.max(100, Math.min(16000,
+      Number(data.settings.dpi.y) || before.y));
+    stageEdit({
+      key: 'naga:dpi', kind: 'settings', target: { kind: 'dpi' },
+      label: 'DPI', before: { x: before.x, y: before.y }, after: { x, y },
+    }, true);
+  }
+}
+
+function applyHpProfile(data) {
+  const bindings = data.bindings || {};
+  const sections = [bindings.normal || {}, bindings.hypershift || {}];
+  const base = state.baseline.hp;
+
+  for (const s of HP_SECTORS) {
+    for (const layer of [0, 1]) {
+      const value = sections[layer]['sector-' + s.n];
+      const before = hpParseLayer(base.sectors[s.n], layer ? 0xfe : 0);
+      if (value == null && !before) continue;
+      const after = value == null ? hpParseActionText('default') :
+        hpParseActionText(value);
+      stageEdit({
+        key: 'hp:sector:' + s.n + '@' + layer, kind: 'onboard',
+        target: { kind: 'sector', n: s.n, layer },
+        label: 'sector ' + s.n + (layer ? ' · shift' : ''),
+        before, after,
+      }, true);
+    }
+  }
+
+  if (data.settings) {
+    const cur = hpEffectiveSettings();
+    const slots = Array.isArray(data.settings.slots)
+      ? data.settings.slots.map((s, i) => ({
+          enabled: !!s.enabled,
+          level: Math.max(0, Math.min(8, Number(s.level) || 0)),
+          color: /^#[0-9a-f]{6}$/i.test(s.color || '') ? s.color :
+            (cur.slots[i] ? cur.slots[i].color : '#000000'),
+        }))
+      : cur.slots;
+    const after = {
+      polling: [125, 250, 500, 1000].includes(Number(data.settings.polling))
+        ? Number(data.settings.polling) : cur.polling,
+      activeSlot: Number(data.settings.activeSlot),
+      slotCount: slots.length,
+      slots,
+    };
+    if (!Number.isInteger(after.activeSlot) || after.activeSlot < 0 ||
+        after.activeSlot >= after.slotCount)
+      after.activeSlot = Math.max(0, after.slotCount - 1);
+    stageEdit({
+      key: 'hp:settings', kind: 'settings', target: { kind: 'settings' },
+      label: 'settings', before: state.baseline.hp.settings, after,
+    }, true);
+  }
 }
 
 function importMap(obj) {
@@ -1814,6 +2072,15 @@ function init() {
   });
   $('downloadJson').addEventListener('click', downloadJson);
   $('push').addEventListener('click', pushAll);
+  $('profileSave').addEventListener('click', saveProfile);
+  $('profileLoad').addEventListener('click', loadProfile);
+  $('profileDelete').addEventListener('click', deleteProfile);
+  $('profileSelect').addEventListener('change', () => {
+    state.profileSelected[state.active] = $('profileSelect').value || null;
+    state.profileSig = null;
+    saveProfiles();
+    renderProfiles();
+  });
   $('importJson').addEventListener('click', () => $('importFile').click());
   $('importFile').addEventListener('change', (e) => {
     readImportFile(e.target.files && e.target.files[0]);
@@ -1833,6 +2100,7 @@ function init() {
   renderAll();
   window.antirazer = {
     state, DEVICES, buildJson, importMap, runSelfTests,
+    saveProfile, loadProfile, deleteProfile, applyProfileData,
     naga: { frame: nagaFrame, parseAction: nagaParseActionText, recString: nagaRecString },
     hp: { parseAction: hpParseActionText, actionString: hpActionString, settings: hpParseSettings },
     queueReplace,

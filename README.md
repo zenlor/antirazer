@@ -180,7 +180,10 @@ sketch of the mouse:
 * **Download JSON** exports the same envelope used by `naga-remap` — current
   bindings plus staged edits, settings and a raw backup section;
 * **Import JSON** stages a map of the same shape; **Save backup** stores a raw
-  snapshot and the inspector can restore one control/sector from it.
+  snapshot and the inspector can restore one control/sector from it;
+* **profiles** name the current configuration and keep it in `localStorage`
+  (per device). Select one and press **Load** to stage its differences from
+  the current read, then **Push changes** to write them; **Delete** removes it.
 
 There are no confirmation dialogs. Safety comes from the queue, per-entry
 revert, the raw backup and the read-back after a push. Writes go to flash:
