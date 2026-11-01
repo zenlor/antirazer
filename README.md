@@ -154,27 +154,46 @@ remains usable without that access.
 
 ## From the browser
 
-The configurator pages are static files over WebHID — no build, no server
-side. Serve them locally and open them in a Chromium-family browser (Firefox
-and Safari do not ship WebHID):
+One static configurator page covers both mice — no build, no server side.
+Serve it locally and open it in a Chromium-family browser (Firefox and Safari
+do not ship WebHID):
 
 ```sh
 python3 -m http.server 8000 -d site  # then http://localhost:8000
 ```
 
-They are also served ready-to-use at <https://zenlor.github.io/antirazer/>
-(razer page at the root, HP page at [/hp.html](https://zenlor.github.io/antirazer/hp.html)).
+It is also served ready-to-use at <https://zenlor.github.io/antirazer/>.
+The old HP URL [/hp.html](https://zenlor.github.io/antirazer/hp.html)
+redirects to the unified page.
 
-Click **Connect**, pick the Naga entry that answers (the mouse exposes several
-interfaces; the page probes each selection and keeps the one that talks the
-mapping protocol), and the tool reads every control on both layers. Edits are
-written to flash and committed immediately, DPI included. The udev rule above
-must be installed, and naga-ui / the naga-remap daemon must be closed — the
-config channel is exclusive.
+Pick the device tab, click **Connect**, and choose the interface that answers
+(the mice expose several; the page probes each selection). The page then reads
+every control, setting and sector it understands and renders a clickable
+sketch of the mouse:
+
+* clicking a control opens the inspector; **Stage edit** queues the change
+  (the control gets an amber marker) without writing anything;
+* the queue is kept in `localStorage`, so it survives a reload, and each entry
+  can be reverted individually;
+* **Push changes** writes the queued onboard changes in one block and reads the
+  device back; host-side wheel bindings stay in the queue for the JSON;
+* **Download JSON** exports the same envelope used by `naga-remap` — current
+  bindings plus staged edits, settings and a raw backup section;
+* **Import JSON** stages a map of the same shape; **Save backup** stores a raw
+  snapshot and the inspector can restore one control/sector from it.
+
+There are no confirmation dialogs. Safety comes from the queue, per-entry
+revert, the raw backup and the read-back after a push. Writes go to flash:
+the Naga stores them immediately, the HP mouse applies them at the next
+replug. Close naga-ui and the naga-remap daemon before connecting — the
+config channel is exclusive — and install the udev rule above for the Naga.
+
+Append `?selftest=1` to show the page's protocol/parser/queue self-tests.
+
 
 ## HP Pavilion Gaming Mouse 300
 
-`research/hp-cfg.c` and `site/hp.html` configure the **HP Pavilion Gaming
+`research/hp-cfg.c` and the browser page configure the **HP Pavilion Gaming
 Mouse 300** (`03f0:2941`) and the same Acrox-ODM family (the blackweb gaming
 mice share this protocol). The decoded memory map, wire format and firmware
 findings live in
@@ -210,8 +229,9 @@ sudo ./hp-cfg dump 0 48640 fw.bin   # read the whole firmware region
 sudo ./hp-cfg reset                 # replug-free apply
 ```
 
-The browser page (`site/hp.html`) does the settings part without a build;
-sector rebinds stay a CLI feature. `research/hp-watch.c` diffs the button
+The browser page configures settings and sector bindings through the same
+queue as the Naga page, and exports them in the shared JSON envelope (see
+[docs/remap.md](docs/remap.md)). `research/hp-watch.c` diffs the button
 sectors live, `research/hp-stage.c` dumps the DPI status frame and
 `research/dis8051.js` is a small 8051 disassembler from the firmware RE.
 

@@ -176,8 +176,14 @@ of it confirms independently:
 
 ## Not done yet
 
-Button-sector writes (rebinding — full token grammar in the blackweb doc),
-LED/RGB writes (same settings block, fields already decoded), levels/colours
-per slot. The WebHID page (`site/hp.html`) could support this PID with the same
-transport — reports are 64 bytes with report id, `sendReport`/feature reports
-map 1:1.
+The unified WebHID page (`site/index.html`) now reads and writes the settings
+block and the eight button sectors through the same queued/push model as the
+Naga page; `site/hp.html` only redirects to it. Still open:
+
+* the physical mapping of sectors 0–2 and 4/6/7 (3 and 5 are confirmed);
+* the shift layer's activation (the page shows it read-only);
+* host-side HP remapping in `naga-remap run` — the JSON envelope already
+  carries `hp-300`, but the CLI driver is a separate phase;
+* LED/RGB behaviour (fields decoded, firmware ignores the LED mode byte);
+* per-slot DPI levels and colours are editable in the page now, but still
+  apply only at the next replug.

@@ -73,11 +73,22 @@ several Naga nodes are present. `--model` is required only when `device` is
 }
 ```
 
-* `device` — `2020`, `2014` or `auto` (default).
+* `version` — optional; `1` is the current envelope version.
+* `device` — `2020`, `2014`, `hp-300`, or `auto` (default).
+* `match` — optional `{vendorId, productId}` hint used by the web page and a
+  future generic driver; the CLI may ignore it.
 * `bindings.normal` — bindings on the normal layer.
-* `bindings.hypershift` — 2020 only; the Hypershift overlay.
+* `bindings.hypershift` — the second layer (2020 Hypershift, HP shift layer).
 * `macros` — named, reusable step lists.
 * `triggers` — optional macro-trigger overrides, grouped by layer.
+* `settings` — optional, device-specific settings (DPI, polling, slots).
+* `backup` — optional raw device snapshot (hex). `naga-remap` accepts and
+  ignores it; the web page uses it for lossless restore.
+
+The web configurator and `naga-remap` share this envelope. Unknown top-level
+keys are ignored for forward compatibility; a driver only reads the sections
+it implements, so a Naga file may carry `settings`/`backup` and an HP file may
+carry `macros` without breaking either side.
 
 A binding is always a string. Sequences live under `macros` and are referenced
 with `"macro:<name>"`, so one macro can be bound to several buttons/layers.
@@ -101,6 +112,20 @@ the thumb buttons. Wheel rotation is not an assignable onboard control: the
 firmware exposes it as a relative HID axis, so those two ids are handled by
 the userspace daemon.
 
+HP Pavilion 300 (`bindings.normal` and `bindings.hypershift`):
+
+* `sector-0` … `sector-7` — the eight flash button sectors.
+* sector 3 is physical button 1 (top left); sector 5 is physical button 4 /
+  the DPI button (bottom right). Sectors 0–2 are assumed to be the main
+  buttons; 4, 6 and 7 are not mapped yet, so treat their ids as flash
+  addresses rather than physical labels.
+* the HP shift layer is exposed as `hypershift`; the web inspector keeps it
+  read-only until its activation is understood.
+
+A raw ctr in hex (`40` … `4b`, `01` … `03`, `0b`, `0c`) also works for the
+2020, and the web page uses hex ids (`09`, `0a`, `0e`, `34`, `35`) for the
+controls it reads but does not draw.
+
 ### Single actions
 
 | value | meaning |
@@ -110,10 +135,46 @@ the userspace daemon.
 | `mouse:left\|right\|middle\|back\|forward` | mouse button |
 | `hypershift` | layer switch (2020 onboard only) |
 | `turbo:f5@3000` | autofire every 3000 ms (2020 onboard, normal layer only) |
-| `default` | restore the device default (2020) |
+| `dpi:up` / `dpi:down` | onboard DPI action (2020) |
+| `dpi:cycle` | onboard DPI cycle action (HP sector 5) |
+| `device:<hex>` | HP device function (for example `device:0a`) |
+| `default` | restore the device default (2020; an empty HP layer) |
 
 Wheel bindings support keys, mouse buttons and macros. `hypershift`, `turbo`
 and `default` are onboard-only.
+
+The browser can stage every action above. The CLI parser currently implements
+the 2020 subset and the HP driver is the next phase (see the support table
+below), so a map containing `dpi:*` or HP ids is a valid web file before it is
+accepted by `naga-remap validate`.
+
+### Settings
+
+`settings` is optional and driver-owned. Unknown keys inside it are ignored.
+
+Naga:
+
+```json
+"settings": { "dpi": { "x": 1600, "y": 2400 } }
+```
+
+HP Pavilion 300:
+
+```json
+"settings": {
+  "polling": 1000,
+  "activeSlot": 1,
+  "slotCount": 4,
+  "slots": [
+    { "enabled": true, "level": 0, "color": "#00ff00" },
+    { "enabled": true, "level": 2, "color": "#ff00ff" }
+  ]
+}
+```
+
+`polling` is in Hz (1000/500/250/125); `level` indexes the level table the
+mouse reports; `color` is the per-slot RGB value the DPI button flashes.
+`slotCount` is informational. HP settings apply at the next replug.
 
 ### Macros
 
@@ -180,6 +241,8 @@ forwarded through the uinput copy.
 
 ## Exporting from the GUI
 
+### naga-ui
+
 The UI has the wheel up/down controls back as host-side controls. Select a
 control, edit its binding and press **Stage change**; the edit is queued (the
 control gets a yellow marker) and you can move on to the next one. **Apply
@@ -196,6 +259,35 @@ staged edit. The **Write daemon config + reload** button remains available
 for an explicit export. DPI keys can be remapped from the same editor; they
 are written onboard like the other buttons.
 
+### Web configurator
+
+`site/index.html` uses the same staging model for both mice. Every edit
+(binding, DPI, HP polling/slot) goes into a queue stored in `localStorage`;
+the sketch marks staged controls in amber, and each queue row can be reverted.
+
+* **Push changes** writes the queued onboard entries in one block and reads
+  the device back. Host-side wheel entries are not written.
+* **Download JSON** exports the envelope above from the last read plus the
+  staged queue: `bindings`, device `settings`, and a raw `backup` section.
+* **Import JSON** stages a map of the same shape instead of writing it.
+* **Save backup** stores a raw snapshot; the inspector can restore a single
+  control or sector from it.
+
+The HP page is gone; `/hp.html` redirects to the unified page. Append
+`?selftest=1` to show the protocol/parser/queue checks.
+
+### CLI support today
+
+| device | `validate` | `apply` | `run` |
+|---|---|---|---|
+| 2020 LH | yes | yes | yes |
+| 2014 | yes | no (no onboard map) | yes |
+| HP Pavilion 300 | web export only | HP driver next phase | HP driver next phase |
+
+The JSON envelope is already shared; the web page emits `hp-300`, `dpi:*`
+and HP `settings` today. The CLI reports them as unsupported until the HP
+driver lands, so files do not need to be rewritten when it does.
+
 ## Requirements and limits
 
 * `apply`/`dump` use the normal libusb path; the udev rule from the README is
@@ -211,6 +303,11 @@ are written onboard like the other buttons.
   request layout as layer 0.
 * Profiles, lighting and firmware macros are out of scope. The 2014 has no
   onboard remapping; `run` is the only option.
+* HP sector 5 is also the onboard DPI button: pressing it re-applies factory
+  bindings until the next replug, even after a successful custom write.
+* The HP shift layer and the sector↔physical-button map are only partly
+  decoded; the page shows the shift layer read-only and labels unconfirmed
+  sectors. Host-side HP remapping (`run`) waits on that mapping.
 
 The parser and planner allocate from one arena per map/plan; the JSON parser
 is the vendored cJSON. cJSON and cimgui/ImGui are built from `vendor/`.
