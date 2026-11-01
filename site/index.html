@@ -5,7 +5,7 @@
   Razer Naga LH 2020 (1532:008d) and HP Pavilion Gaming Mouse 300 (03f0:2941).
   WebHID only: Chromium/Brave/Edge. No dependencies, no build; all behaviour
   lives in app.js. Edits are staged in a queue, persisted in localStorage, and
-  written to the mouse only when "Push changes" is clicked.
+  written to the mouse only when "Flush changes" is clicked.
 -->
 <html lang="en">
 <head>
@@ -57,19 +57,19 @@
 <section class="card queueDock">
   <div class="cardHead queueHead">
     <h2>queue <span id="queueCount" class="count">0</span></h2>
-    <span id="queueHint" class="muted">staged edits — nothing is written until you push</span>
+    <span id="queueHint" class="muted">edits are queued automatically — flush, export, save a profile, or reset</span>
     <div class="barActions">
-      <button type="button" id="discardAll" disabled>Discard all</button>
+      <button type="button" id="discardAll" disabled>Reset queue</button>
       <button type="button" id="importJson">Import JSON</button>
       <button type="button" id="downloadJson" disabled>Download JSON</button>
-      <button type="button" id="push" class="primary" disabled>Push changes</button>
+      <button type="button" id="push" class="primary" disabled>Flush changes</button>
     </div>
   </div>
   <div class="profileBar">
     <label for="profileSelect">profile</label>
     <select id="profileSelect"></select>
     <input id="profileName" type="text" maxlength="48" placeholder="name this configuration">
-    <button type="button" id="profileSave">Save current</button>
+    <button type="button" id="profileSave">Save as profile</button>
     <button type="button" id="profileLoad">Load</button>
     <button type="button" id="profileDelete">Delete</button>
     <span id="profileMsg" class="muted"></span>

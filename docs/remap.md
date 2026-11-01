@@ -260,17 +260,20 @@ are written onboard like the other buttons.
 
 ### Web configurator
 
-`site/index.html` uses the same staging model for both mice. Every edit
-(binding, DPI, HP polling/slot) goes into a queue stored in `localStorage`;
-the sketch marks staged controls in amber, and each queue row can be reverted.
+`site/index.html` uses the same automatic staging model for both mice. Every
+edit (binding, DPI, HP polling/slot) is queued the moment it is made and
+stored in `localStorage`; the sketch marks queued controls in amber, and each
+queue row can be reverted individually.
 
-* **Push changes** writes the queued onboard entries in one block and reads
+* **Flush changes** writes the queued onboard entries in one block and reads
   the device back. Host-side wheel entries are not written.
 * **Download JSON** exports the envelope above from the last read plus the
-  staged queue: `bindings`, device `settings`, and a raw `backup` section.
+  queued edits: `bindings`, device `settings`, and a raw `backup` section.
 * **Import JSON** stages a map of the same shape instead of writing it.
 * **Save backup** stores a raw snapshot; the inspector can restore a single
   control or sector from it.
+* **Reset queue** discards the queued edits; **profiles** save/load named
+  configurations, and loading a profile queues its differences.
 
 The HP page is gone; `/hp.html` redirects to the unified page. Append
 `?selftest=1` to show the protocol/parser/queue checks.

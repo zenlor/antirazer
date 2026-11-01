@@ -219,7 +219,7 @@ main {
   text-align: center;
 }
 .queueList { display: flex; flex-direction: column; gap: .25rem; }
-.queueList:empty::after { content: "no staged edits"; color: var(--muted); font-size: .82rem; padding: .2rem 0; }
+.queueList:empty::after { content: "queue is empty"; color: var(--muted); font-size: .82rem; padding: .2rem 0; }
 .qitem {
   display: grid;
   grid-template-columns: minmax(9rem, 1fr) minmax(0, 2fr) auto auto;

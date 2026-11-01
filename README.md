@@ -171,19 +171,21 @@ Pick the device tab, click **Connect**, and choose the interface that answers
 every control, setting and sector it understands and renders a clickable
 sketch of the mouse:
 
-* clicking a control opens the inspector; **Stage edit** queues the change
+* clicking a control opens the inspector; every change is queued immediately
   (the control gets an amber marker) without writing anything;
 * the queue is kept in `localStorage`, so it survives a reload, and each entry
   can be reverted individually;
-* **Push changes** writes the queued onboard changes in one block and reads the
-  device back; host-side wheel bindings stay in the queue for the JSON;
+* **Flush changes** writes the queued onboard changes in one block and reads
+  the device back; host-side wheel bindings stay in the queue for the JSON;
 * **Download JSON** exports the same envelope used by `naga-remap` — current
-  bindings plus staged edits, settings and a raw backup section;
+  bindings plus queued edits, settings and a raw backup section;
 * **Import JSON** stages a map of the same shape; **Save backup** stores a raw
   snapshot and the inspector can restore one control/sector from it;
+* **Reset queue** discards all queued changes.
 * **profiles** name the current configuration and keep it in `localStorage`
-  (per device). Select one and press **Load** to stage its differences from
-  the current read, then **Push changes** to write them; **Delete** removes it.
+  (per device). **Save as profile** stores it; select one and press **Load**
+  to stage its differences from the current read, then **Flush changes** to
+  write them; **Delete** removes it.
 
 There are no confirmation dialogs. Safety comes from the queue, per-entry
 revert, the raw backup and the read-back after a push. Writes go to flash:

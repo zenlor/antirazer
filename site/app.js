@@ -59,6 +59,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const $ = (id) => document.getElementById(id);
 
+function debounce(fn, ms) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+}
+
 function withTimeout(promise, ms, message) {
   let timer;
   const timeout = new Promise((_, reject) => {
@@ -441,6 +449,27 @@ function findEdit(key) {
   return q ? q.edits.find((e) => e.key === key) || null : null;
 }
 
+/* Device values as last read; queue edits must keep these as "before" even
+ * when the same control is edited repeatedly. */
+function baselineNagaRec(ctr, layer) {
+  const b = state.baseline.naga;
+  return b && b.records[ctr] ? b.records[ctr][layer] : null;
+}
+
+function baselineNagaDpi() {
+  const b = state.baseline.naga;
+  return b ? { ...b.dpi } : { ...state.dpi };
+}
+
+function baselineHpLayer(n, layer) {
+  const b = state.baseline.hp;
+  return b ? hpParseLayer(b.sectors[n], layer ? 0xfe : 0) : null;
+}
+
+function baselineHpSettings() {
+  return state.baseline.hp ? state.baseline.hp.settings : null;
+}
+
 function nagaEffectiveRec(ctr, layer) {
   const e = findEdit('naga:rec:' + ctr + '@' + layer);
   if (e) return e.after;
@@ -792,6 +821,59 @@ function renderAll() {
   updateButtons();
 }
 
+/* After an automatic stage: update the parts driven by the queue without
+ * rebuilding the editor or the settings form (which would steal focus). */
+function refreshAfterEdit() {
+  renderSketch();
+  renderOtherControls();
+  renderQueue();
+  updateButtons();
+  updateInspectorStatus();
+}
+
+function updateInspectorStatus() {
+  const cur = $('inspectorCurrent');
+  if (!cur) return;
+  if (state.active === 'naga') {
+    const ctrl = NAGA_BY_ID[state.selected.naga] || NAGA_BY_ID['1'];
+    if (!ctrl) return;
+    const layer = ctrl.host ? 0 : state.layers.naga;
+    const edit = stagedNaga(ctrl, layer);
+    const current = ctrl.host ? nagaEffectiveHost(ctrl.id) :
+      nagaEffectiveRec(ctrl.ctr, layer);
+    const currentText = ctrl.host ? (nagaHostString(current) || '—') :
+      (nagaRecString(current) || '—');
+    const stagedText = edit ? (ctrl.host ? nagaHostString(edit.after) :
+      nagaRecString(edit.after)) : null;
+    cur.replaceChildren(
+      h('div', null, h('span', { class: 'muted' }, 'now: '),
+        h('span', { class: 'now' }, currentText)),
+      stagedText != null
+        ? h('div', null, h('span', { class: 'muted' }, 'staged: '),
+            h('span', { class: 'staged' }, stagedText))
+        : null);
+    const rev = $('inspectorRevert');
+    if (rev) rev.disabled = !edit;
+  } else {
+    const sel = String(state.selected.hp || 'sector-3');
+    const n = Number((sel.match(/^sector-(\d+)$/) || [])[1] ?? 3);
+    const edit = findEdit('hp:sector:' + n + '@0');
+    const current = hpEffectiveLayer(n, 0);
+    const stagedText = edit ? (hpActionString(edit.after) || 'default') : null;
+    cur.replaceChildren(
+      h('div', null, h('span', { class: 'muted' }, 'primary: '),
+        h('span', { class: 'now' }, hpActionString(current) || '—')),
+      h('div', null, h('span', { class: 'muted' }, 'shift: '),
+        hpBindingText(n, 1)),
+      stagedText != null
+        ? h('div', null, h('span', { class: 'muted' }, 'staged: '),
+            h('span', { class: 'staged' }, stagedText))
+        : null);
+    const rev = $('inspectorRevert');
+    if (rev) rev.disabled = !edit;
+  }
+}
+
 function renderHeader() {
   for (const b of document.querySelectorAll('#tabs .tab'))
     b.classList.toggle('active', b.dataset.dev === state.active);
@@ -963,10 +1045,14 @@ function renderSettings() {
     const dpi = nagaEffectiveDpi();
     const x = h('input', { type: 'number', min: '100', max: '16000', step: '50', value: dpi.x, id: 'dpiX' });
     const y = h('input', { type: 'number', min: '100', max: '16000', step: '50', value: dpi.y, id: 'dpiY' });
-    const msg = h('span', { class: 'muted' }, 'not readable from this firmware');
+    const auto = debounce(() => stageNagaDpi(x, y), 250);
+    x.addEventListener('input', auto);
+    y.addEventListener('input', auto);
+    x.addEventListener('change', () => stageNagaDpi(x, y));
+    y.addEventListener('change', () => stageNagaDpi(x, y));
     box.appendChild(h('h3', null, 'DPI'));
     box.appendChild(h('div', { class: 'row' }, 'x', x, '×', y,
-      h('button', { type: 'button', onclick: () => stageNagaDpi(x, y) }, 'Stage DPI'), msg));
+      h('span', { class: 'muted' }, 'queued automatically · not readable from the firmware')));
     return;
   }
   const b = state.baseline.hp;
@@ -994,17 +1080,36 @@ function renderSettings() {
     const co = h('input', { type: 'color', value: slot.color, 'data-slot': i, 'data-f': 'color' });
     tbody.appendChild(h('tr', null,
       h('td', null, i), h('td', null, en), h('td', null, lv),
-      h('td', null, String(b.dpiLevels && b.dpiLevels[slot.level] != null ? b.dpiLevels[slot.level] : '?')),
+      h('td', { 'data-dpi-slot': String(i) },
+        String(b.dpiLevels && b.dpiLevels[slot.level] != null ? b.dpiLevels[slot.level] : '?')),
       h('td', null, co)));
   });
   tbl.appendChild(tbody);
   box.appendChild(tbl);
+  const auto = () => stageHpSettings(box, true);
+  poll.addEventListener('change', auto);
+  active.addEventListener('change', auto);
+  for (const inp of tbl.querySelectorAll('input')) {
+    inp.addEventListener('change', auto);
+    if (inp.type === 'number') inp.addEventListener('input', debounce(auto, 250));
+  }
   box.appendChild(h('div', { class: 'row' },
-    h('button', { type: 'button', onclick: () => stageHpSettings(box) }, 'Stage settings'),
-    h('span', { class: 'muted' }, 'applies at the next replug · the LED is hardwired')));
+    h('span', { class: 'muted' },
+      'queued automatically · applies at the next replug · the LED is hardwired')));
   if (b.dpiLevels) {
     box.appendChild(h('div', { class: 'muted' },
       'DPI levels reported by the mouse: ' + b.dpiLevels.filter(Boolean).join(' / ')));
+  }
+}
+
+function updateHpDpiCells(box, b) {
+  if (!b || !b.dpiLevels) return;
+  for (const cell of box.querySelectorAll('[data-dpi-slot]')) {
+    const i = Number(cell.dataset.dpiSlot);
+    const lv = box.querySelector('input[data-slot="' + i + '"][data-f=level]');
+    const level = Number(lv ? lv.value : 0);
+    const dpi = b.dpiLevels[level];
+    cell.textContent = dpi != null ? String(dpi) : '?';
   }
 }
 
@@ -1013,6 +1118,7 @@ function renderSettings() {
 function modRow(devKey, mod) {
   const names = devKey === 'hp' ? HP_MODN : MODN.slice(0, 4);
   const row = h('div', { class: 'row mods' }, h('label', null, 'modifiers'));
+  row.dataset.for = devKey === 'hp' ? 'key' : 'key turbo';
   names.forEach((name, i) => {
     const bit = 1 << i;
     row.appendChild(h('label', null,
@@ -1032,13 +1138,20 @@ function stagedNaga(ctrl, layer) {
 }
 
 function stageNagaDpi(xInput, yInput) {
+  if (!activeBaseline()) return false;
   const x = Math.max(100, Math.min(16000, Number(xInput.value) || 1600));
   const y = Math.max(100, Math.min(16000, Number(yInput.value) || 1600));
-  const before = nagaEffectiveDpi();
+  const existing = findEdit('naga:dpi');
+  const before = existing ? existing.before : baselineNagaDpi();
+  const after = { x, y };
   stageEdit({
     key: 'naga:dpi', kind: 'settings', target: { kind: 'dpi' }, label: 'DPI',
-    before: { x: before.x, y: before.y }, after: { x, y },
-  });
+    before, after,
+  }, true);
+  refreshAfterEdit();
+  setQueueMsg(same(before, after) ? 'queued: no DPI change' :
+    'queued: DPI ' + x + '×' + y);
+  return true;
 }
 
 function renderNagaInspector(box) {
@@ -1054,7 +1167,7 @@ function renderNagaInspector(box) {
   box.appendChild(h('div', { class: 'sub' },
     ctrl.host ? 'host-side wheel · exported to JSON, applied by the daemon' :
     'ctr ' + hex(ctrl.ctr) + (ctrl.thumb != null ? ' · thumb grid' : '')));
-  box.appendChild(h('div', { class: 'current' },
+  box.appendChild(h('div', { class: 'current', id: 'inspectorCurrent' },
     h('div', null, h('span', { class: 'muted' }, 'now: '), h('span', { class: 'now' }, currentText)),
     stagedText != null ? h('div', null, h('span', { class: 'muted' }, 'staged: '),
       h('span', { class: 'staged' }, stagedText)) : null));
@@ -1091,7 +1204,8 @@ function renderNagaInspector(box) {
   const keyRow = h('div', { class: 'row', 'data-for': 'key turbo' },
     h('label', null, 'key'), keyInput);
   box.appendChild(keyRow);
-  box.appendChild(modRow('naga', mod));
+  const modsRow = modRow('naga', mod);
+  box.appendChild(modsRow);
 
   const mouseSel = selectEl(Object.entries(NAGA_MOUSE).map(([id, n]) => [id, n]),
     ctrl.host ? (host && host.mouse) || 1 : rec.type === 1 ? rec.data[0] || 1 : 1);
@@ -1120,42 +1234,60 @@ function renderNagaInspector(box) {
   actionSel.addEventListener('change', sync);
   sync();
 
-  const stageBtn = h('button', {
-    type: 'button', class: 'primary', disabled: !activeBaseline(),
-    onclick: () => stageNagaForm(ctrl, layer, actionSel, keyInput, mouseSel, dpiSel, msInput, box),
-  }, 'Stage edit');
-  const actions = h('div', { class: 'actions' }, stageBtn);
-  if (edit) actions.appendChild(h('button', {
-    type: 'button', onclick: () => revertEdit(edit.key),
-  }, 'Revert staged'));
+  const auto = (silent = true) => stageNagaForm(ctrl, layer, actionSel, keyInput,
+    mouseSel, dpiSel, msInput, box, silent);
+  actionSel.addEventListener('change', () => { sync(); auto(true); });
+  keyInput.addEventListener('input', debounce(() => auto(true), 300));
+  keyInput.addEventListener('change', () => auto(false));
+  for (const m of modsRow.querySelectorAll('input[data-mod]'))
+    m.addEventListener('change', () => auto(true));
+  mouseSel.addEventListener('change', () => auto(true));
+  dpiSel.addEventListener('change', () => auto(true));
+  msInput.addEventListener('input', debounce(() => auto(true), 300));
+  msInput.addEventListener('change', () => auto(false));
+
+  const actions = h('div', { class: 'actions' },
+    h('button', {
+      type: 'button', id: 'inspectorRevert', disabled: !edit,
+      onclick: () => {
+        const e = stagedNaga(ctrl, layer);
+        if (e) revertEdit(e.key);
+      },
+    }, 'Revert staged'));
   if (activeBaseline() && state.backups.naga) actions.appendChild(h('button', {
     type: 'button', onclick: () => restoreNaga(ctrl, layer),
   }, 'Restore backup'));
   box.appendChild(actions);
+  box.appendChild(h('div', { class: 'notice' }, 'edits are queued automatically'));
   if (!activeBaseline()) box.appendChild(h('div', { class: 'notice' }, 'connect and read the mouse first'));
   if (ctrl.host) box.appendChild(h('div', { class: 'notice' },
     'wheel rotation is host-side; include it in the JSON and load it with naga-remap run/daemon'));
 }
 
-function stageNagaForm(ctrl, layer, actionSel, keyInput, mouseSel, dpiSel, msInput, root) {
+function stageNagaForm(ctrl, layer, actionSel, keyInput, mouseSel, dpiSel, msInput, root, silent) {
+  if (!activeBaseline()) return false;
   try {
     const a = actionSel.value;
+    const existing = stagedNaga(ctrl, layer);
     if (ctrl.host) {
-      const before = nagaEffectiveHost(ctrl.id);
+      const before = existing ? existing.before : null;
       let after;
       if (a === 'mouse') after = { action: 'mouse', mouse: Number(mouseSel.value) };
       else {
         const combo = parseCombo(keyInput.value, 0x0f);
         after = { action: 'key', usage: combo.usage, mod: combo.mod | checkedMods(root) };
       }
-      stageEdit({
+      const edit = {
         key: 'naga:host:' + ctrl.id, kind: 'host',
         target: { kind: 'host', id: ctrl.id },
         label: ctrl.name + ' (host)', before, after,
-      });
-      return;
+      };
+      stageEdit(edit, true);
+      refreshAfterEdit();
+      setQueueMsg(same(before, after) ? 'queued: no change' : 'queued: ' + edit.label);
+      return true;
     }
-    const before = nagaEffectiveRec(ctrl.ctr, layer);
+    const before = existing ? existing.before : baselineNagaRec(ctrl.ctr, layer);
     let after;
     if (a === 'default') after = { type: 0, data: [] };
     else if (a === 'hypershift') after = { type: 0x0b, data: [1] };
@@ -1170,12 +1302,19 @@ function stageNagaForm(ctrl, layer, actionSel, keyInput, mouseSel, dpiSel, msInp
       const combo = parseCombo(keyInput.value, 0x0f);
       after = { type: 2, data: [combo.mod | checkedMods(root), combo.usage] };
     }
-    stageEdit({
+    const edit = {
       key: 'naga:rec:' + ctrl.ctr + '@' + layer, kind: 'onboard',
       target: { kind: 'rec', ctr: ctrl.ctr, layer },
       label: ctrl.name + (layer ? ' · hypershift' : ''), before, after,
-    });
-  } catch (e) { showError(e); }
+    };
+    stageEdit(edit, true);
+    refreshAfterEdit();
+    setQueueMsg(same(before, after) ? 'queued: no change' : 'queued: ' + edit.label);
+    return true;
+  } catch (e) {
+    if (!silent) showError(e);
+    return false;
+  }
 }
 
 function renderHpInspector(box) {
@@ -1190,7 +1329,7 @@ function renderHpInspector(box) {
 
   box.appendChild(h('div', { class: 'title' }, 'sector ' + n));
   box.appendChild(h('div', { class: 'sub' }, meta.physical + ' · ' + meta.note));
-  box.appendChild(h('div', { class: 'current' },
+  box.appendChild(h('div', { class: 'current', id: 'inspectorCurrent' },
     h('div', null, h('span', { class: 'muted' }, 'primary: '), h('span', { class: 'now' }, currentText)),
     h('div', null, h('span', { class: 'muted' }, 'shift: '), hpBindingText(n, 1)),
     stagedText != null ? h('div', null, h('span', { class: 'muted' }, 'staged: '),
@@ -1212,7 +1351,8 @@ function renderHpInspector(box) {
   const mod = current && current.type === 6 ? current.tokens[0][1] : 0;
   const keyInput = h('input', { type: 'text', value: usage ? keyName(usage) : '', list: 'keynames', placeholder: 'x / f5 / 0x1a' });
   box.appendChild(h('div', { class: 'row', 'data-for': 'key' }, h('label', null, 'key'), keyInput));
-  box.appendChild(modRow('hp', mod));
+  const modsRow = modRow('hp', mod);
+  box.appendChild(modsRow);
 
   const mouseSel = selectEl(Object.entries(HP_MOUSE).map(([id, name]) => [id, name]),
     current && current.type === 0 ? current.tokens[0][0] : 1);
@@ -1234,23 +1374,36 @@ function renderHpInspector(box) {
   actionSel.addEventListener('change', sync);
   sync();
 
+  const auto = (silent = true) => stageHpForm(n, actionSel, keyInput, mouseSel,
+    devInput, box, silent);
+  actionSel.addEventListener('change', () => { sync(); auto(true); });
+  keyInput.addEventListener('input', debounce(() => auto(true), 300));
+  keyInput.addEventListener('change', () => auto(false));
+  for (const m of modsRow.querySelectorAll('input[data-mod]'))
+    m.addEventListener('change', () => auto(true));
+  mouseSel.addEventListener('change', () => auto(true));
+  devInput.addEventListener('input', debounce(() => auto(true), 300));
+  devInput.addEventListener('change', () => auto(false));
+
   const actions = h('div', { class: 'actions' },
     h('button', {
-      type: 'button', class: 'primary', disabled: !activeBaseline(),
-      onclick: () => stageHpForm(n, actionSel, keyInput, mouseSel, devInput, box),
-    }, 'Stage edit'));
-  if (edit) actions.appendChild(h('button', {
-    type: 'button', onclick: () => revertEdit(edit.key),
-  }, 'Revert staged'));
+      type: 'button', id: 'inspectorRevert', disabled: !edit,
+      onclick: () => {
+        const e = findEdit('hp:sector:' + n + '@0');
+        if (e) revertEdit(e.key);
+      },
+    }, 'Revert staged'));
   if (activeBaseline() && state.backups.hp) actions.appendChild(h('button', {
     type: 'button', onclick: () => restoreHp(n),
   }, 'Restore backup'));
   box.appendChild(actions);
+  box.appendChild(h('div', { class: 'notice' }, 'edits are queued automatically'));
   if (!activeBaseline()) box.appendChild(h('div', { class: 'notice' }, 'connect and read the mouse first'));
   box.appendChild(h('div', { class: 'notice' }, 'only the primary layer is editable; the shift layer is shown read-only'));
 }
 
-function stageHpForm(n, actionSel, keyInput, mouseSel, devInput, root) {
+function stageHpForm(n, actionSel, keyInput, mouseSel, devInput, root, silent) {
+  if (!activeBaseline()) return false;
   try {
     const a = actionSel.value;
     let after;
@@ -1265,18 +1418,29 @@ function stageHpForm(n, actionSel, keyInput, mouseSel, devInput, root) {
         tokens: [[combo.usage, combo.mod | checkedMods(root)]],
       };
     }
-    const before = hpParseLayer(activeBaseline().sectors[n], 0);
-    stageEdit({
+    const existing = findEdit('hp:sector:' + n + '@0');
+    const before = existing ? existing.before : baselineHpLayer(n, 0);
+    const edit = {
       key: 'hp:sector:' + n + '@0', kind: 'onboard',
       target: { kind: 'sector', n, layer: 0 },
       label: 'sector ' + n, before, after,
-    });
-  } catch (e) { showError(e); }
+    };
+    stageEdit(edit, true);
+    refreshAfterEdit();
+    setQueueMsg(same(before, after) ? 'queued: no change' : 'queued: ' + edit.label);
+    return true;
+  } catch (e) {
+    if (!silent) showError(e);
+    return false;
+  }
 }
 
-function stageHpSettings(box) {
+function stageHpSettings(box, silent) {
   const b = state.baseline.hp;
-  if (!b) return showError(new Error('read the mouse first'));
+  if (!b) {
+    if (!silent) showError(new Error('read the mouse first'));
+    return false;
+  }
   try {
     const s = hpEffectiveSettings();
     const polling = Number(box.querySelector('[data-role=poll]').value);
@@ -1292,11 +1456,21 @@ function stageHpSettings(box) {
       };
     });
     const after = { polling, activeSlot, slotCount: slots.length, slots };
-    stageEdit({
+    const existing = findEdit('hp:settings');
+    const before = existing ? existing.before : baselineHpSettings();
+    const edit = {
       key: 'hp:settings', kind: 'settings', target: { kind: 'settings' },
-      label: 'settings', before: b.settings, after,
-    });
-  } catch (e) { showError(e); }
+      label: 'settings', before, after,
+    };
+    stageEdit(edit, true);
+    updateHpDpiCells(box, b);
+    refreshAfterEdit();
+    setQueueMsg(same(before, after) ? 'queued: no change' : 'queued: settings');
+    return true;
+  } catch (e) {
+    if (!silent) showError(e);
+    return false;
+  }
 }
 
 function renderInspector() {
@@ -1449,8 +1623,8 @@ function renderQueue() {
       h('button', { type: 'button', onclick: () => revertEdit(e.key) }, 'revert')));
   }
   $('queueHint').textContent = q.edits.length
-    ? 'staged edits — nothing is written until you push'
-    : 'no staged edits';
+    ? 'edits are queued automatically — flush, export, save a profile, or reset'
+    : 'no queued edits';
 }
 
 function updateButtons() {
@@ -1464,7 +1638,7 @@ function updateButtons() {
   $('discardAll').disabled = !n;
   $('downloadJson').disabled = !activeBaseline();
   $('push').disabled = !connected || !writable || !state.selfTestOk;
-  $('push').textContent = 'Push changes' + (writable ? ' (' + writable + ')' : '');
+  $('push').textContent = 'Flush changes' + (writable ? ' (' + writable + ')' : '');
   $('queueCount').textContent = String(n);
 }
 
@@ -1692,7 +1866,7 @@ function loadProfile() {
     state.profileSig = null;
     saveProfiles();
     renderAll();
-    setQueueMsg('loaded profile "' + prof.name + '" — review, then Push changes');
+    setQueueMsg('loaded profile "' + prof.name + '" — review, then Flush changes');
   } catch (e) { showError(e); }
 }
 
@@ -1957,7 +2131,7 @@ async function pushAll() {
     saveQueue();
     try { await readAll(); } catch (e) { showError(e); }
     const left = state.queue[key].edits.length;
-    ok('pushed ' + done + ' change(s)' +
+    ok('flushed ' + done + ' change(s)' +
       (left ? '; ' + left + ' host-side entr' + (left === 1 ? 'y' : 'ies') + ' stay queued for the JSON' : ''));
     renderAll();
   } catch (e) {
@@ -2068,7 +2242,7 @@ function init() {
     state.queue[state.active].edits = [];
     saveQueue();
     renderAll();
-    setQueueMsg('queue cleared');
+    setQueueMsg('queue reset');
   });
   $('downloadJson').addEventListener('click', downloadJson);
   $('push').addEventListener('click', pushAll);
