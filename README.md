@@ -125,6 +125,14 @@ the selected staged edit. Pressing Enter in the raw usage field also stages
 the edit. DPI applies immediately, and the **Write daemon config + reload**
 button can still be used explicitly. The status line reports each operation.
 
+The config interface is exclusive (claiming it suppresses normal mouse input),
+so `naga-ui` only holds it while it is actually working. **Connect** and
+**Read all** read the configuration and release it immediately; record
+re-read, **Apply DPI**, **Apply all** and the daemon-config export briefly
+re-open it, do their work, and release it again. In particular, **Apply all**
+takes the lock once for the whole queued batch and unlocks as soon as the
+queue is empty, leaving the mouse usable between edits.
+
 The binding field has three ways in:
 
 * a searchable chooser that starts with **mouse & layer actions** — mouse

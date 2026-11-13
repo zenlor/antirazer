@@ -272,19 +272,23 @@ static void draw_toolbar(ui_state *s)
 	if (igButton("Read all", V(96.0f, 0.0f))) {
 		int failed = ui_state_reload(s);
 
-		if (failed)
+		if (!s->connected) {
+			/* ui_state_reload already set the open error. */
+		} else if (failed) {
 			ui_state_set_status(s, true,
-					    "%d of %zu records could not be read",
+					    "%d of %zu records could not be read; device released",
 					    failed, naga_ctrls_count);
-		else
-			ui_state_set_status(s, false, "read %zu records",
+		} else {
+			ui_state_set_status(s, false,
+					    "read %zu records; device released",
 					    naga_ctrls_count);
+		}
 	}
 	igEndDisabled();
 
 	igSameLine(0.0f, 24.0f);
 	if (s->connected)
-		igTextColored(V4(0.55f, 0.85f, 0.55f, 1.0f), "device ready");
+		igTextColored(V4(0.55f, 0.85f, 0.55f, 1.0f), "config loaded");
 	else
 		igTextColored(V4(0.95f, 0.62f, 0.42f, 1.0f), "no device");
 

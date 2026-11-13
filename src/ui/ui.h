@@ -53,7 +53,7 @@ struct ui_pending {
 
 typedef struct {
 	/* device */
-	bool connected;
+	bool connected; /* last read succeeded; the device is not held open */
 	int selected; /* index into naga_ctrls, -1 = nothing selected */
 	naga_rec recs[UI_MAX_CTRLS];
 	bool rec_ok[UI_MAX_CTRLS];
@@ -89,10 +89,11 @@ typedef struct {
 
 void ui_state_init(ui_state *s);
 
-/* Open the device and read every record. Returns 0 on success. */
+/* Open the device, read every record and release it again. */
 int ui_state_connect(ui_state *s);
 
-/* Read every record; returns the number of failed reads. */
+/* Open the device, read every record and release it again; returns the
+ * number of failed reads. */
 int ui_state_reload(ui_state *s);
 
 /* Select a control by index into naga_ctrls and load the editor fields. */

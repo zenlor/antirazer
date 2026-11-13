@@ -20,6 +20,33 @@
 /* The firmware needs a moment between reads; bursts of reads start echoing. */
 #define READ_SETTLE_US 12000
 
+/*
+ * The config channel is exclusive and claiming interface 0 blocks the mouse,
+ * so naga-ui only holds it while it is actually reading or writing. Every
+ * operation opens the device, does its work and closes it again.
+ */
+static int lock_device(ui_state *s, bool *opened, const char *what)
+{
+	int rc;
+
+	*opened = false;
+	if (naga_is_open())
+		return NAGA_OK;
+	rc = naga_open();
+	if (rc != NAGA_OK)
+		ui_state_set_status(s, true, "%s: %s", what,
+				    naga_strerror(rc));
+	else
+		*opened = true;
+	return rc;
+}
+
+static void unlock_device(bool opened)
+{
+	if (opened)
+		naga_close();
+}
+
 /* The thumb grid is the interesting part of the device: select its first
  * control so the editor is populated from the start. */
 static int first_thumbctrl(void)
@@ -175,14 +202,11 @@ void ui_state_set_status(ui_state *s, bool is_error, const char *fmt, ...)
 	s->status_is_error = is_error;
 }
 
-int ui_state_reload(ui_state *s)
+static int read_records(ui_state *s)
 {
 	size_t count =
 	    naga_ctrls_count < UI_MAX_CTRLS ? naga_ctrls_count : UI_MAX_CTRLS;
 	int failed = 0;
-
-	if (!s->connected)
-		return (int)count;
 
 	for (size_t i = 0; i < count; i++) {
 		if (naga_ctrls[i].host_only) {
@@ -199,28 +223,45 @@ int ui_state_reload(ui_state *s)
 	return failed;
 }
 
-int ui_state_connect(ui_state *s)
+int ui_state_reload(ui_state *s)
 {
-	int rc = naga_open();
+	size_t count =
+	    naga_ctrls_count < UI_MAX_CTRLS ? naga_ctrls_count : UI_MAX_CTRLS;
+	bool opened;
+	int rc = lock_device(s, &opened, "read");
+	int failed;
 
 	if (rc != NAGA_OK) {
 		s->connected = false;
-		ui_state_set_status(s, true, "%s", naga_strerror(rc));
+		return (int)count;
+	}
+	s->connected = true;
+	failed = read_records(s);
+	unlock_device(opened);
+	return failed;
+}
+
+int ui_state_connect(ui_state *s)
+{
+	bool opened;
+	int rc = lock_device(s, &opened, "connect");
+	int failed;
+
+	if (rc != NAGA_OK) {
+		s->connected = false;
 		return rc;
 	}
-
 	s->connected = true;
-	{
-		int failed = ui_state_reload(s);
-
-		if (failed)
-			ui_state_set_status(s, false,
-					    "connected, %d of %zu records unreadable",
-					    failed, naga_ctrls_count);
-		else
-			ui_state_set_status(s, false, "connected, %zu records read",
-					    naga_ctrls_count);
-	}
+	failed = read_records(s);
+	unlock_device(opened);
+	if (failed)
+		ui_state_set_status(s, false,
+				    "config read, %d of %zu records unreadable; device released",
+				    failed, naga_ctrls_count);
+	else
+		ui_state_set_status(s, false,
+				    "config read (%zu records); device released",
+				    naga_ctrls_count);
 	return NAGA_OK;
 }
 
@@ -356,7 +397,8 @@ void ui_state_select(ui_state *s, int index)
 void ui_state_refresh_selected(ui_state *s)
 {
 	const naga_ctrl *ctrl = ui_state_selected(s);
-	int rc;
+	bool opened;
+	int lrc, rc;
 
 	if (!ctrl) {
 		ui_state_set_status(s, true, "select a control first");
@@ -369,7 +411,11 @@ void ui_state_refresh_selected(ui_state *s)
 				    ctrl->name);
 		return;
 	}
+	lrc = lock_device(s, &opened, "read");
+	if (lrc != NAGA_OK)
+		return;
 	rc = naga_get_rec(ctrl->ctr, &s->recs[s->selected]);
+	unlock_device(opened);
 	s->rec_ok[s->selected] = rc == NAGA_OK;
 	if (rc != NAGA_OK) {
 		ui_state_set_status(s, true, "%s: read failed: %s", ctrl->name,
@@ -377,7 +423,8 @@ void ui_state_refresh_selected(ui_state *s)
 		return;
 	}
 	ui_state_select(s, s->selected);
-	ui_state_set_status(s, false, "%s: record re-read", ctrl->name);
+	ui_state_set_status(s, false, "%s: record re-read; device released",
+			    ctrl->name);
 }
 
 void ui_state_set_key(ui_state *s, unsigned usage, unsigned mod)
@@ -433,6 +480,7 @@ void ui_state_apply(ui_state *s)
 {
 	const naga_ctrl *ctrl = ui_state_selected(s);
 	char what[64];
+	bool opened;
 	int usage, mod, rc;
 
 	if (!ctrl) {
@@ -483,6 +531,8 @@ void ui_state_apply(ui_state *s)
 		ui_state_set_status(s, true, "not connected");
 		return;
 	}
+	if (lock_device(s, &opened, "write") != NAGA_OK)
+		return;
 
 	switch (s->action) {
 	case UI_ACTION_MOUSE: {
@@ -501,6 +551,7 @@ void ui_state_apply(ui_state *s)
 	default:
 		usage = naga_parse_usage(s->key);
 		if (usage < 0) {
+			unlock_device(opened);
 			ui_state_set_status(
 			    s, true, "unknown key \"%s\" (x, f5, enter, 1a)", s->key);
 			return;
@@ -524,6 +575,7 @@ void ui_state_apply(ui_state *s)
 	}
 
 	if (rc != NAGA_OK) {
+		unlock_device(opened);
 		ui_state_set_status(s, true, "%s: write failed: %s", ctrl->name,
 				    naga_strerror(rc));
 		return;
@@ -531,7 +583,9 @@ void ui_state_apply(ui_state *s)
 
 	s->rec_ok[s->selected] =
 	    naga_get_rec(ctrl->ctr, &s->recs[s->selected]) == NAGA_OK;
-	ui_state_set_status(s, false, "%s: %s committed", ctrl->name, what);
+	unlock_device(opened);
+	ui_state_set_status(s, false, "%s: %s committed; device released",
+			    ctrl->name, what);
 	/*
 	 * Keep the editor fields as entered. The read-back layout of
 	 * non-keyboard assignments is not fully understood, so re-deriving the
@@ -542,20 +596,24 @@ void ui_state_apply(ui_state *s)
 
 void ui_state_apply_dpi(ui_state *s)
 {
+	bool opened;
 	int rc;
 
 	if (!s->connected) {
 		ui_state_set_status(s, true, "not connected");
 		return;
 	}
+	if (lock_device(s, &opened, "write") != NAGA_OK)
+		return;
 	rc = naga_set_dpi((unsigned)s->dpi_x, (unsigned)s->dpi_y);
+	unlock_device(opened);
 	if (rc != NAGA_OK) {
 		ui_state_set_status(s, true, "DPI: write failed: %s",
 				    naga_strerror(rc));
 		return;
 	}
-	ui_state_set_status(s, false, "DPI set to %dx%d and committed", s->dpi_x,
-			    s->dpi_y);
+	ui_state_set_status(s, false, "DPI set to %dx%d and committed; device released",
+			    s->dpi_x, s->dpi_y);
 }
 
 void ui_state_export_config(ui_state *s)
@@ -564,12 +622,37 @@ void ui_state_export_config(ui_state *s)
 	char err[256] = "";
 	FILE *fp;
 	bool first;
+	bool opened;
+	naga_rec normal[UI_MAX_CTRLS];
+	naga_rec hyper[UI_MAX_CTRLS];
+	bool normal_ok[UI_MAX_CTRLS];
+	bool hyper_ok[UI_MAX_CTRLS];
+	size_t limit =
+	    naga_ctrls_count < UI_MAX_CTRLS ? naga_ctrls_count : UI_MAX_CTRLS;
 
 	if (!s->connected) {
 		ui_state_set_status(
 		    s, true, "connect first: records are exported from the mouse");
 		return;
 	}
+
+	memset(normal_ok, 0, sizeof normal_ok);
+	memset(hyper_ok, 0, sizeof hyper_ok);
+	if (lock_device(s, &opened, "read") != NAGA_OK)
+		return;
+	for (size_t i = 0; i < limit; i++) {
+		const naga_ctrl *ctrl = &naga_ctrls[i];
+
+		if (ctrl->host_only)
+			continue;
+		normal_ok[i] = naga_get_rec_layer(ctrl->ctr, 0, &normal[i]) ==
+			       NAGA_OK && normal[i].valid;
+		hyper_ok[i] = naga_get_rec_layer(ctrl->ctr, 1, &hyper[i]) ==
+			      NAGA_OK && hyper[i].valid;
+		usleep(READ_SETTLE_US);
+	}
+	unlock_device(opened);
+
 	if (remap_ensure_config_dir(err, sizeof err) < 0) {
 		ui_state_set_status(s, true, "%s", err);
 		return;
@@ -585,19 +668,14 @@ void ui_state_export_config(ui_state *s)
 
 	fputs("    \"normal\": {\n", fp);
 	first = true;
-	for (size_t i = 0; i < naga_ctrls_count; i++) {
-		const naga_ctrl *ctrl = &naga_ctrls[i];
-		naga_rec rec;
+	for (size_t i = 0; i < limit; i++) {
 		char value[96];
 
-		if (ctrl->host_only)
+		if (!normal_ok[i])
 			continue;
-		if (naga_get_rec_layer(ctrl->ctr, 0, &rec) != NAGA_OK ||
-		    !rec.valid)
+		if (!record_action(&normal[i], value, sizeof value))
 			continue;
-		if (!record_action(&rec, value, sizeof value))
-			continue;
-		json_kv(fp, &first, ctrl->name, value);
+		json_kv(fp, &first, naga_ctrls[i].name, value);
 	}
 	for (int hi = 0; hi < UI_HOST_COUNT; hi++) {
 		char value[96];
@@ -611,19 +689,14 @@ void ui_state_export_config(ui_state *s)
 
 	fputs("    \"hypershift\": {\n", fp);
 	first = true;
-	for (size_t i = 0; i < naga_ctrls_count; i++) {
-		const naga_ctrl *ctrl = &naga_ctrls[i];
-		naga_rec rec;
+	for (size_t i = 0; i < limit; i++) {
 		char value[96];
 
-		if (ctrl->host_only)
+		if (!hyper_ok[i])
 			continue;
-		if (naga_get_rec_layer(ctrl->ctr, 1, &rec) != NAGA_OK ||
-		    !rec.valid)
+		if (!record_action(&hyper[i], value, sizeof value))
 			continue;
-		if (!record_action(&rec, value, sizeof value))
-			continue;
-		json_kv(fp, &first, ctrl->name, value);
+		json_kv(fp, &first, naga_ctrls[i].name, value);
 	}
 	fputs("\n    }\n  }\n}\n", fp);
 
@@ -743,6 +816,8 @@ void ui_state_apply_all(ui_state *s)
 {
 	size_t applied = 0;
 	bool host_changed = false;
+	bool device_changed = false;
+	bool opened = false;
 	size_t limit = naga_ctrls_count < UI_MAX_CTRLS ? naga_ctrls_count :
 							UI_MAX_CTRLS;
 
@@ -755,6 +830,16 @@ void ui_state_apply_all(ui_state *s)
 		    s, true, "connect first: staged changes need the mouse");
 		return;
 	}
+
+	for (size_t i = 0; i < limit; i++) {
+		if (s->pending[i].dirty && !naga_ctrls[i].host_only) {
+			device_changed = true;
+			break;
+		}
+	}
+	if (device_changed &&
+	    lock_device(s, &opened, "write") != NAGA_OK)
+		return;
 
 	for (size_t i = 0; i < limit; i++) {
 		const naga_ctrl *ctrl = &naga_ctrls[i];
@@ -799,6 +884,7 @@ void ui_state_apply_all(ui_state *s)
 			break;
 		}
 		if (rc != NAGA_OK) {
+			unlock_device(opened);
 			ui_state_set_status(s, true, "%s: write failed: %s",
 					    ctrl->name, naga_strerror(rc));
 			return;
@@ -807,6 +893,7 @@ void ui_state_apply_all(ui_state *s)
 		s->rec_ok[i] = naga_get_rec(ctrl->ctr, &s->recs[i]) == NAGA_OK;
 		applied++;
 	}
+	unlock_device(opened);
 
 	if (s->selected >= 0)
 		ui_state_select(s, s->selected);
@@ -815,7 +902,8 @@ void ui_state_apply_all(ui_state *s)
 		/* Export reads the records again, writes the JSON and signals. */
 		ui_state_export_config(s);
 	} else {
-		ui_state_set_status(s, false, "applied %zu queued change(s)",
+		ui_state_set_status(s, false,
+				    "applied %zu queued change(s); device released",
 				    applied);
 	}
 }
