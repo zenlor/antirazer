@@ -431,6 +431,35 @@ out:
 	remap_map_free(&map);
 }
 
+static void test_mouse_fallback(void)
+{
+	struct remap_map map;
+	struct remap_binding *b;
+	struct remap_binding rec = {0};
+	char value[96];
+
+	load_ok("{\"device\":\"2020\",\"bindings\":{\"normal\":{"
+		"\"mb9\":\"mouse:9\",\"mb10\":\"mouse:10\"}}}",
+		&map);
+	prepare_ok(&map, REMAP_DEVICE_2020);
+	if (failures)
+		goto out;
+
+	b = find_binding(&map, "mb9", 0);
+	CHECK(b && b->ctr == 0x09 && b->type == NAGA_ASSIGN_MOUSE &&
+	      b->mouse == 9);
+	b = find_binding(&map, "mb10", 0);
+	CHECK(b && b->ctr == 0x0A && b->mouse == 10);
+
+	rec.type = NAGA_ASSIGN_MOUSE;
+	rec.mouse = 9;
+	remap_binding_string(&rec, value, sizeof value);
+	CHECK(!strcmp(value, "mouse:9"));
+
+out:
+	remap_map_free(&map);
+}
+
 static void test_invalid(void)
 {
 	expect_load_fail("{\"bindings\":{\"normal\":{\"1\":\"bogus\"}}}");
@@ -520,6 +549,7 @@ int main(void)
 	test_host_wheel();
 	test_hp_map();
 	test_naga_dpi_action();
+	test_mouse_fallback();
 	test_invalid();
 	test_key_mapping();
 

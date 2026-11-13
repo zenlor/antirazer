@@ -76,6 +76,7 @@ enum naga_group {
 	NAGA_GROUP_WHEEL, /* wheel up / down */
 	NAGA_GROUP_DPI,	  /* DPI up / down */
 	NAGA_GROUP_THUMB, /* the 12-button thumb grid */
+	NAGA_GROUP_OTHER, /* extra buttons, profile, wheel tilt */
 };
 
 typedef struct {

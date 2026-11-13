@@ -30,6 +30,7 @@ The mapping tools share one device core:
 | DPI set | implemented (`04/05`), not verified on hardware yet |
 | hypershift layer | switch action decoded (type `0B`, inferred) and implemented; hold-vs-toggle behaviour unverified |
 | main buttons, DPI keys | default actions decoded; DPI keys are onboard-remappable through the same record path |
+| extra buttons (`09`/`0A`), profile, tilt | read and shown in `naga-ui` and the browser; same record write path as the other controls, not separately verified |
 | wheel up/down | host-side via the daemon (`REL_WHEEL` interception); not an onboard control |
 | file-driven remapping | `naga-remap`: JSON map, onboard apply for the 2020, host-side run for both |
 | sequences / macros | host-side via `naga-remap run`; the firmware stores single actions only |
@@ -108,10 +109,11 @@ another machine.
 naga-ui
 ```
 
-The left column shows the thumb panel and a top view of the mouse; every
-control is clickable and its current binding is drawn on it (hover for a
-tooltip). Wheel up/down are shown as host-side controls and are saved in the
-daemon config rather than the mouse's flash. The right column edits the
+The left column shows the thumb panel, a top view of the mouse, and a small
+column for the extra buttons, profile key and wheel tilt; every control is
+clickable and its current binding is drawn on it (hover for a tooltip). Wheel
+up/down are shown as host-side controls and are saved in the daemon config
+rather than the mouse's flash. The right column edits the
 selected control: its binding (keyboard key, mouse button or Hypershift
 switch), modifiers, layer and turbo delay, then **Stage change**.
 

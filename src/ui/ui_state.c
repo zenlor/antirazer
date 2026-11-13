@@ -75,7 +75,10 @@ static int record_action(const naga_rec *rec, char *buf, size_t len)
 	case NAGA_ASSIGN_MOUSE: {
 		const char *name = naga_mouse_name(rec->mouse);
 
-		snprintf(buf, len, "mouse:%s", name ? name : "?");
+		if (name)
+			snprintf(buf, len, "mouse:%s", name);
+		else
+			snprintf(buf, len, "mouse:%u", rec->mouse);
 		return 1;
 	}
 	case NAGA_ASSIGN_HYPERSHIFT:

@@ -393,7 +393,7 @@ function nagaRecString(rec) {
   const d = rec.data || [];
   switch (rec.type) {
     case 0: return 'default';
-    case 1: return 'mouse:' + (NAGA_MOUSE[d[0]] || hex(d[0]));
+    case 1: return 'mouse:' + (NAGA_MOUSE[d[0]] || d[0]);
     case 2: return comboString(d[0] || 0, d[1] || 0);
     case 6: return d[0] === 1 ? 'dpi:up' : d[0] === 2 ? 'dpi:down' : 'dpi:' + hex(d[0]);
     case 0x0b: return 'hypershift';

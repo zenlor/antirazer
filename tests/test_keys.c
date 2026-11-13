@@ -158,12 +158,17 @@ static void test_mouse(void)
 
 static void test_ctrls(void)
 {
-	CHECK(naga_ctrls_count == 19);
+	CHECK(naga_ctrls_count == 24);
 
 	CHECK(naga_ctrl_by_ctr(0x04) != NULL);
 	CHECK(naga_ctrl_by_ctr(0x04)->host_only);
 	CHECK(naga_ctrl_by_ctr(0x05)->host_only);
 	CHECK(!naga_ctrl_by_ctr(0x40)->host_only);
+	CHECK(naga_ctrl_by_ctr(0x09)->group == NAGA_GROUP_OTHER);
+	CHECK(naga_ctrl_by_ctr(0x0A)->group == NAGA_GROUP_OTHER);
+	CHECK(naga_ctrl_by_ctr(0x0E)->group == NAGA_GROUP_OTHER);
+	CHECK(naga_ctrl_by_name("tilt-right")->ctr == 0x34);
+	CHECK(naga_ctrl_by_name("tilt-left")->ctr == 0x35);
 
 	CHECK(naga_ctrl_by_ctr(0x01) == &naga_ctrls[0]);
 	CHECK(naga_ctrl_by_name("left") == &naga_ctrls[0]);

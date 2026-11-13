@@ -26,6 +26,13 @@ const naga_ctrl naga_ctrls[] = {
     {"dpi-up", 0x0B, NAGA_GROUP_DPI, false},
     {"dpi-down", 0x0C, NAGA_GROUP_DPI, false},
 
+    /* extra buttons without a dedicated drawing region */
+    {"mb9", 0x09, NAGA_GROUP_OTHER, false},
+    {"mb10", 0x0A, NAGA_GROUP_OTHER, false},
+    {"profile", 0x0E, NAGA_GROUP_OTHER, false},
+    {"tilt-right", 0x34, NAGA_GROUP_OTHER, false},
+    {"tilt-left", 0x35, NAGA_GROUP_OTHER, false},
+
     /* thumb grid: three columns, four rows, labelled as on the device */
     {"1", 0x40, NAGA_GROUP_THUMB, false},
     {"2", 0x41, NAGA_GROUP_THUMB, false},

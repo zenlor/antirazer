@@ -1310,7 +1310,10 @@ void remap_binding_string(const struct remap_binding *b, char *buf, size_t len)
 	case NAGA_ASSIGN_MOUSE: {
 		const char *name = naga_mouse_name((int)b->mouse);
 
-		snprintf(buf, len, "mouse:%s", name ? name : "?");
+		if (name)
+			snprintf(buf, len, "mouse:%s", name);
+		else
+			snprintf(buf, len, "mouse:%u", b->mouse);
 		break;
 	}
 	case NAGA_ASSIGN_HYPERSHIFT:

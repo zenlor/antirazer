@@ -204,6 +204,32 @@ static void draw_top_view(ui_state *s, ImDrawList *dl, canvas *c)
 		draw_region(s, dl, c, ctrl, index, regions[i].x, regions[i].y,
 			    regions[i].w, regions[i].h, 4.0f, regions[i].label, false);
 	}
+
+	/* the five records without a physical region on the shell */
+	{
+		static const struct {
+			const char *name;
+			const char *label;
+			float y;
+		} other[] = {
+		    {"mb9", "mb9", 18.0f},	  {"mb10", "mb10", 52.0f},
+		    {"profile", "prof", 86.0f},	  {"tilt-right", "tilt R", 120.0f},
+		    {"tilt-left", "tilt L", 154.0f},
+		};
+
+		text_left(dl, cpos(c, 196.0f, 4.0f), COL_MUTED, "other");
+		for (size_t i = 0; i < sizeof other / sizeof other[0]; i++) {
+			const naga_ctrl *ctrl = naga_ctrl_by_name(other[i].name);
+			int index;
+
+			if (!ctrl)
+				continue;
+			index = (int)(ctrl - naga_ctrls);
+			draw_region(s, dl, c, ctrl, index, 196.0f, other[i].y,
+				    78.0f, 28.0f, 4.0f, other[i].label,
+				    78.0f * c->scale > 66.0f);
+		}
+	}
 }
 
 static void draw_device(ui_state *s)
